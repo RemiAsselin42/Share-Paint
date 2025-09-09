@@ -1,0 +1,26 @@
+{
+  "name": "share-paint-server",
+  "version": "1.0.0",
+  "description": "Socket.IO server for Share Paint collaborative drawing app",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.5",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "socket.io",
+    "real-time",
+    "drawing",
+    "collaboration"
+  ],
+  "author": "",
+  "license": "MIT"
+}

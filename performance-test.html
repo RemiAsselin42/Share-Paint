@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Test de Performance - Share Paint</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+        background: #f5f5f5;
+      }
+      .test-container {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin: 20px 0;
+      }
+      .metric {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+      }
+      .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #007bff;
+      }
+      .metric-label {
+        font-size: 14px;
+        color: #666;
+        margin-top: 5px;
+      }
+      .status {
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 5px;
+      }
+      .success {
+        background: #d4edda;
+        color: #155724;
+      }
+      .error {
+        background: #f8d7da;
+        color: #721c24;
+      }
+      .warning {
+        background: #fff3cd;
+        color: #856404;
+      }
+      .info {
+        background: #d1ecf1;
+        color: #0c5460;
+      }
+      button {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 5px;
+        cursor: pointer;
+        margin: 5px;
+        font-size: 14px;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      button:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+      }
+      #log {
+        background: #f8f9fa;
+        padding: 15px;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        height: 200px;
+        overflow-y: scroll;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🚀 Test de Performance - Share Paint</h1>
+
+    <div class="test-container">
+      <h2>📊 Métriques de Performance</h2>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-value" id="connectionTime">--</div>
+          <div class="metric-label">Temps de Connexion (ms)</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="latency">--</div>
+          <div class="metric-label">Latence (ms)</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="drawingPoints">--</div>
+          <div class="metric-label">Points Dessinés</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="syncRate">--</div>
+          <div class="metric-label">Taux de Sync (%)</div>
+        </div>
+      </div>
+
+      <div id="status" class="status info">Prêt pour le test...</div>
+
+      <button onclick="startPerformanceTest()" id="testBtn">
+        🧪 Lancer Test de Performance
+      </button>
+      <button onclick="testLatency()" id="latencyBtn">
+        📡 Test de Latence
+      </button>
+      <button onclick="testDrawingSync()" id="syncBtn">
+        🎨 Test de Synchronisation
+      </button>
+      <button onclick="clearLog()" id="clearBtn">🗑️ Vider Log</button>
+    </div>
+
+    <div class="test-container">
+      <h3>📋 Log de Test</h3>
+      <div id="log"></div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+      let socket = null;
+      let testMetrics = {
+        connectionTime: 0,
+        latency: 0,
+        drawingPoints: 0,
+        syncRate: 100,
+      };
+
+      function updateMetric(id, value) {
+        document.getElementById(id).textContent = value;
+        testMetrics[id] = value;
+      }
+
+      function updateStatus(message, type = "info") {
+        const status = document.getElementById("status");
+        status.textContent = message;
+        status.className = `status ${type}`;
+      }
+
+      function addLog(message, type = "info") {
+        const log = document.getElementById("log");
+        const timestamp = new Date().toLocaleTimeString();
+        const entry = document.createElement("div");
+        entry.innerHTML = `<span style="color: #666">[${timestamp}]</span> ${message}`;
+        entry.style.color =
+          type === "error" ? "red" : type === "success" ? "green" : "black";
+        log.appendChild(entry);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function clearLog() {
+        document.getElementById("log").innerHTML = "";
+      }
+
+      async function connectToServer() {
+        return new Promise((resolve, reject) => {
+          const startTime = Date.now();
+
+          socket = io("http://localhost:3001", {
+            transports: ["websocket", "polling"],
+          });
+
+          socket.on("connect", () => {
+            const connectionTime = Date.now() - startTime;
+            updateMetric("connectionTime", connectionTime);
+            addLog(`✅ Connexion établie en ${connectionTime}ms`, "success");
+            resolve(socket);
+          });
+
+          socket.on("connect_error", (error) => {
+            addLog(`❌ Erreur de connexion: ${error.message}`, "error");
+            reject(error);
+          });
+
+          setTimeout(() => {
+            if (!socket.connected) {
+              reject(new Error("Timeout de connexion"));
+            }
+          }, 5000);
+        });
+      }
+
+      async function testLatency() {
+        if (!socket || !socket.connected) {
+          await connectToServer();
+        }
+
+        addLog("🔄 Test de latence en cours...");
+        updateStatus("Test de latence...", "info");
+
+        const testRoomId =
+          "latency-test-" + Math.random().toString(36).substr(2, 9);
+        const startTimes = [];
+        let responseCount = 0;
+        const totalTests = 10;
+
+        // Écouter les réponses
+        socket.on("user-joined", () => {
+          const latency = Date.now() - startTimes[responseCount];
+          addLog(`📡 Ping ${responseCount + 1}: ${latency}ms`);
+          responseCount++;
+
+          if (responseCount === totalTests) {
+            const avgLatency =
+              startTimes.reduce((sum, startTime, index) => {
+                return sum + (Date.now() - startTime);
+              }, 0) / totalTests;
+
+            updateMetric("latency", Math.round(avgLatency));
+            updateStatus(
+              `Test de latence terminé: ${Math.round(avgLatency)}ms`,
+              "success"
+            );
+            addLog(
+              `✅ Latence moyenne: ${Math.round(avgLatency)}ms`,
+              "success"
+            );
+          }
+        });
+
+        // Envoyer les pings
+        for (let i = 0; i < totalTests; i++) {
+          setTimeout(() => {
+            startTimes[i] = Date.now();
+            socket.emit("join-room", testRoomId + i, {
+              id: "test-user",
+              color: "#000000",
+            });
+          }, i * 100);
+        }
+      }
+
+      async function testDrawingSync() {
+        if (!socket || !socket.connected) {
+          await connectToServer();
+        }
+
+        addLog("🎨 Test de synchronisation de dessin...");
+        updateStatus("Test de synchronisation...", "info");
+
+        const testRoomId =
+          "sync-test-" + Math.random().toString(36).substr(2, 9);
+        const testPoints = [];
+        let receivedPoints = 0;
+
+        // Générer des points de test
+        for (let i = 0; i < 100; i++) {
+          testPoints.push({
+            x: Math.random() * 800,
+            y: Math.random() * 600,
+          });
+        }
+
+        // Rejoindre la salle de test
+        socket.emit("join-room", testRoomId, {
+          id: "test-user",
+          color: "#000000",
+        });
+
+        // Écouter les données de dessin reçues
+        socket.on("drawing-data", (data) => {
+          if (data.roomId === testRoomId) {
+            receivedPoints += data.points.length;
+            updateMetric("drawingPoints", receivedPoints);
+
+            const syncRate = Math.round(
+              (receivedPoints / testPoints.length) * 100
+            );
+            updateMetric("syncRate", syncRate);
+
+            if (receivedPoints >= testPoints.length) {
+              addLog(
+                `✅ Synchronisation terminée: ${receivedPoints}/${testPoints.length} points`,
+                "success"
+              );
+              updateStatus(`Synchronisation: ${syncRate}%`, "success");
+            }
+          }
+        });
+
+        // Envoyer les points de test
+        setTimeout(() => {
+          const drawingData = {
+            id: "test-drawing-" + Date.now(),
+            roomId: testRoomId,
+            userId: "test-user",
+            tool: "brush",
+            color: "#000000",
+            lineWidth: 4,
+            points: testPoints,
+            timestamp: Date.now(),
+          };
+
+          socket.emit("drawing-data", drawingData);
+          addLog(`📤 Envoi de ${testPoints.length} points de test`);
+        }, 1000);
+      }
+
+      async function startPerformanceTest() {
+        updateStatus("Démarrage du test complet...", "info");
+        addLog("🚀 === DÉBUT DU TEST DE PERFORMANCE ===", "success");
+
+        try {
+          // Test 1: Connexion
+          addLog("🔌 Phase 1: Test de connexion");
+          await connectToServer();
+
+          // Test 2: Latence
+          addLog("📡 Phase 2: Test de latence");
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await testLatency();
+
+          // Test 3: Synchronisation
+          addLog("🎨 Phase 3: Test de synchronisation");
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await testDrawingSync();
+
+          addLog("✅ === TEST COMPLET TERMINÉ ===", "success");
+          updateStatus("Test complet terminé!", "success");
+        } catch (error) {
+          addLog(`❌ Erreur durant le test: ${error.message}`, "error");
+          updateStatus("Erreur durant le test", "error");
+        }
+      }
+
+      // Initialisation
+      window.onload = () => {
+        addLog("📱 Test de performance Share Paint initialisé");
+        addLog("🎯 URL du serveur: http://localhost:3001");
+      };
+    </script>
+  </body>
+</html>

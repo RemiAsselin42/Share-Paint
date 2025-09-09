@@ -1,0 +1,105 @@
+// Variables CSS pour les thèmes
+:root {
+  // Thème clair (par défaut)
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #e9ecef;
+  --bg-accent: #667eea;
+  --bg-white: #ffffff;
+
+  --text-primary: #495057;
+  --text-secondary: #6c757d;
+  --text-muted: #6c757d;
+  --text-inverse: #ffffff;
+  --text-white: #e9ecef;
+
+  --border-primary: #dee2e6;
+  --border-secondary: #e9ecef;
+  --border-accent: #667eea;
+
+  --shadow-light: rgba(0, 0, 0, 0.1);
+  --shadow-medium: rgba(0, 0, 0, 0.15);
+  --shadow-heavy: rgba(0, 0, 0, 0.2);
+
+  --canvas-bg: #ffffff;
+  --canvas-border: #e9ecef;
+
+  --success: #28a745;
+  --danger: #dc3545;
+  --warning: #ffc107;
+  --info: #17a2b8;
+
+  --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --gradient-danger: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+  --gradient-success: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+}
+
+// Thème sombre
+[data-theme="dark"] {
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #2d2d2d;
+  --bg-tertiary: #404040;
+  --bg-accent: #667eea;
+  --bg-white: #e9ecef;
+
+  --text-primary: #e9ecef;
+  --text-secondary: #ced1d4;
+  --text-muted: #a9b1b8;
+  --text-inverse: #1a1a1a;
+  --text-white: #e9ecef;
+
+  --border-primary: #404040;
+  --border-secondary: #2d2d2d;
+  --border-accent: #667eea;
+
+  --shadow-light: rgba(0, 0, 0, 0.3);
+  --shadow-medium: rgba(0, 0, 0, 0.4);
+  --shadow-heavy: rgba(0, 0, 0, 0.5);
+
+  --canvas-bg: #2d2d2d;
+  --canvas-border: #404040;
+
+  --success: #28a745;
+  --danger: #dc3545;
+  --warning: #ffc107;
+  --info: #17a2b8;
+
+  --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --gradient-danger: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+  --gradient-success: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+}
+
+// Transition fluide pour le changement de thème
+* {
+  transition: background-color 0.3s ease, color 0.3s ease,
+    border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+// Styles globaux utilisant les variables
+body {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+// Mixin pour simplifier l'usage
+@mixin themed-background($primary: true) {
+  @if $primary {
+    background: var(--bg-primary);
+  } @else {
+    background: var(--bg-secondary);
+  }
+}
+
+@mixin themed-border($style: solid, $width: 1px) {
+  border: $width $style var(--border-primary);
+}
+
+@mixin themed-shadow($level: medium) {
+  @if $level == light {
+    box-shadow: 0 2px 4px var(--shadow-light);
+  } @else if $level == medium {
+    box-shadow: 0 4px 8px var(--shadow-medium);
+  } @else if $level == heavy {
+    box-shadow: 0 8px 16px var(--shadow-heavy);
+  }
+}
