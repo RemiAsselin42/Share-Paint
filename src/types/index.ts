@@ -1,6 +1,7 @@
 export interface Point {
   x: number;
   y: number;
+  pressure?: number; // Pression du stylet (0-1)
 }
 
 export interface DrawingData {

@@ -13,6 +13,19 @@
     height: 100%;
     display: block;
 
+    // Optimisations pour tablettes graphiques et appareils tactiles
+    touch-action: none; // Désactive les gestes par défaut du navigateur
+    user-select: none; // Empêche la sélection de texte
+    -webkit-user-select: none;
+    -webkit-touch-callout: none; // Désactive le menu contextuel sur iOS
+    -webkit-tap-highlight-color: transparent; // Supprime la surbrillance du tap sur mobile
+
+    // Amélioration de la réactivité
+    will-change: transform; // Optimise les performances de rendu
+    image-rendering: pixelated; // Pour des traits nets
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+
     &.grab {
       cursor: grab;
 
@@ -25,6 +38,14 @@
       cursor: url('data:image/svg+xml;charset=UTF-8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M20.71 5.63l-2.34-2.34a1 1 0 0 0-1.41 0l-3.12 3.12-1.93-1.91-1.41 1.41 1.42 1.42L3 14.25V21h6.75l7.92-7.92 1.42 1.42 1.41-1.41-1.91-1.93 3.12-3.12a1 1 0 0 0 0-1.41zM8.5 19H5v-3.5l7.92-7.92L16.42 11 8.5 19z" fill="black"/></svg>')
           4 20,
         crosshair;
+    }
+
+    // Support pour les stylets et tablettes graphiques
+    &.brush,
+    &.pencil {
+      // Optimisation pour un meilleur rendu des traits
+      image-rendering: auto;
+      image-rendering: high-quality;
     }
   }
 
@@ -89,6 +110,22 @@
         transform: translateY(0);
       }
     }
+  }
+}
+
+// Améliorations spéciales pour les appareils tactiles
+@media (hover: none) and (pointer: coarse) {
+  .canvas-container .canvas {
+    // Amélioration de la responsivité tactile
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+// Support pour les stylets avec pression
+@media (pointer: fine) {
+  .canvas-container .canvas {
+    // Optimisations pour les dispositifs de pointage précis (stylets)
+    cursor: crosshair;
   }
 }
 

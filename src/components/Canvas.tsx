@@ -55,20 +55,21 @@ const Canvas: React.FC<CanvasProps> = ({
     height: 600,
   });
 
-  const getMousePos = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>): Point => {
+  // Fonction générique pour obtenir les coordonnées depuis différents types d'événements
+  const getPointerPos = useCallback(
+    (clientX: number, clientY: number): Point => {
       const canvas = canvasRef.current;
       if (!canvas) return { x: 0, y: 0 };
 
       const rect = canvas.getBoundingClientRect();
 
-      // Position de la souris dans le container
-      const clientX = e.clientX - rect.left;
-      const clientY = e.clientY - rect.top;
+      // Position du pointeur dans le container
+      const containerX = clientX - rect.left;
+      const containerY = clientY - rect.top;
 
       // Convertir en coordonnées du canvas en tenant compte du viewport
-      const canvasX = (clientX - viewport.x) / viewport.scale;
-      const canvasY = (clientY - viewport.y) / viewport.scale;
+      const canvasX = (containerX - viewport.x) / viewport.scale;
+      const canvasY = (containerY - viewport.y) / viewport.scale;
 
       return {
         x: canvasX,
@@ -78,19 +79,59 @@ const Canvas: React.FC<CanvasProps> = ({
     [viewport]
   );
 
-  const getViewportMousePos = useCallback(
+  const getMousePos = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>): Point => {
+      return getPointerPos(e.clientX, e.clientY);
+    },
+    [getPointerPos]
+  );
+
+  // Fonction pour obtenir les coordonnées depuis les événements tactiles/stylet
+  const getTouchPos = useCallback(
+    (
+      e:
+        | React.TouchEvent<HTMLCanvasElement>
+        | React.PointerEvent<HTMLCanvasElement>
+    ): Point => {
+      if ("touches" in e && e.touches.length > 0) {
+        // Événement tactile - la pression n'est généralement pas disponible
+        const touch = e.touches[0];
+        return {
+          ...getPointerPos(touch.clientX, touch.clientY),
+          pressure: 0.5, // Valeur par défaut pour le touch
+        };
+      } else if ("clientX" in e) {
+        // Événement pointer avec support de la pression
+        return {
+          ...getPointerPos(e.clientX, e.clientY),
+          pressure: e.pressure || 0.5, // Pression du stylet (0-1)
+        };
+      }
+      return { x: 0, y: 0, pressure: 0.5 };
+    },
+    [getPointerPos]
+  );
+
+  const getViewportMousePos = useCallback(
+    (clientX: number, clientY: number): Point => {
       const canvas = canvasRef.current;
       if (!canvas) return { x: 0, y: 0 };
 
       const rect = canvas.getBoundingClientRect();
 
       return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
+        x: clientX - rect.left,
+        y: clientY - rect.top,
       };
     },
     []
+  );
+
+  const getViewportPosFromMouse = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>): Point => {
+      return getViewportMousePos(e.clientX, e.clientY);
+    },
+    [getViewportMousePos]
   );
 
   // Fonction pour dessiner l'effet calligraphie
@@ -159,38 +200,23 @@ const Canvas: React.FC<CanvasProps> = ({
         case "eraser":
           ctx.globalCompositeOperation = "destination-out";
           ctx.globalAlpha = opacity; // L'opacité affecte maintenant l'intensité de la gomme
-          // ✅ Conserver lineCap/lineJoin round pour la gomme aussi
           break;
 
         case "brush":
           ctx.globalCompositeOperation = "source-over";
-          // ✅ lineCap/lineJoin déjà définis en "round" ci-dessus
           break;
 
         case "pencil":
           ctx.globalCompositeOperation = "source-over";
-          // ✅ CHANGEMENT : Plus de lineCap "square" - on garde "round" pour la cohérence
-          // ctx.lineCap = "square"; // SUPPRIMÉ
           break;
-
-        // case "marker":
-        //   ctx.globalCompositeOperation = "multiply";
-        //   ctx.globalAlpha = Math.min(opacity, 0.7);
-        //   break;
-
-        // case "spray":
-        //   ctx.globalCompositeOperation = "source-over";
-        //   return drawSpray(ctx, points, color, lineWidth, opacity);
 
         case "calligraphy":
           ctx.globalCompositeOperation = "source-over";
-          // Traiter la calligraphie comme un cas spécial mais continuer le processus
           break;
 
         case "watercolor":
           ctx.globalCompositeOperation = "multiply";
           ctx.globalAlpha = Math.min(opacity, 0.6);
-          // Effet aquarelle avec une ligne plus douce
           ctx.shadowColor = color;
           ctx.shadowBlur = lineWidth * 0.5;
           break;
@@ -236,37 +262,72 @@ const Canvas: React.FC<CanvasProps> = ({
         ctx.rect(startPoint.x, startPoint.y, width, height);
         ctx.stroke();
       } else if (points.length === 1) {
-        // Point unique
+        // Point unique avec pression si disponible
+        const point = points[0];
+        const pressure = point.pressure || 0.5;
+        const pressuredSize = lineWidth * pressure;
+
         ctx.beginPath();
-        ctx.arc(points[0].x, points[0].y, lineWidth / 2, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, pressuredSize / 2, 0, Math.PI * 2);
         ctx.fill();
       } else if (points.length === 2) {
-        // Deux points : ligne simple
+        // Deux points : ligne simple avec pression
+        const startPoint = points[0];
+        const endPoint = points[1];
+
+        // Utiliser la pression moyenne si disponible
+        const startPressure = startPoint.pressure || 0.5;
+        const endPressure = endPoint.pressure || 0.5;
+        const avgPressure = (startPressure + endPressure) / 2;
+
+        ctx.lineWidth = lineWidth * avgPressure;
         ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
-        ctx.lineTo(points[1].x, points[1].y);
+        ctx.moveTo(startPoint.x, startPoint.y);
+        ctx.lineTo(endPoint.x, endPoint.y);
         ctx.stroke();
       } else {
-        // Courbe lissée pour les outils de pinceau
-        ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
+        // Courbe lissée avec pression variable pour les outils de pinceau
+        if (tool === "brush" || tool === "pencil") {
+          // Dessiner avec des segments de taille variable selon la pression
+          for (let i = 0; i < points.length - 1; i++) {
+            const currentPoint = points[i];
+            const nextPoint = points[i + 1];
 
-        for (let i = 1; i < points.length - 2; i++) {
-          const cp1x = (points[i].x + points[i + 1].x) / 2;
-          const cp1y = (points[i].y + points[i + 1].y) / 2;
-          ctx.quadraticCurveTo(points[i].x, points[i].y, cp1x, cp1y);
+            const currentPressure = currentPoint.pressure || 0.5;
+            const nextPressure = nextPoint.pressure || 0.5;
+            const avgPressure = (currentPressure + nextPressure) / 2;
+
+            // Ajuster la taille du trait selon la pression
+            const pressuredLineWidth = lineWidth * Math.max(0.1, avgPressure);
+
+            ctx.lineWidth = pressuredLineWidth;
+            ctx.beginPath();
+            ctx.moveTo(currentPoint.x, currentPoint.y);
+            ctx.lineTo(nextPoint.x, nextPoint.y);
+            ctx.stroke();
+          }
+        } else {
+          // Courbe lissée classique pour les autres outils
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+
+          for (let i = 1; i < points.length - 2; i++) {
+            const cp1x = (points[i].x + points[i + 1].x) / 2;
+            const cp1y = (points[i].y + points[i + 1].y) / 2;
+            ctx.quadraticCurveTo(points[i].x, points[i].y, cp1x, cp1y);
+          }
+
+          if (points.length > 2) {
+            ctx.quadraticCurveTo(
+              points[points.length - 2].x,
+              points[points.length - 2].y,
+              points[points.length - 1].x,
+              points[points.length - 1].y
+            );
+          }
+
+          ctx.stroke();
         }
-
-        if (points.length > 2) {
-          ctx.quadraticCurveTo(
-            points[points.length - 2].x,
-            points[points.length - 2].y,
-            points[points.length - 1].x,
-            points[points.length - 1].y
-          );
-        }
-
-        ctx.stroke();
       }
 
       // Réinitialiser les effets shadow
@@ -710,7 +771,7 @@ const Canvas: React.FC<CanvasProps> = ({
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const point = getMousePos(e);
-    const viewportPoint = getViewportMousePos(e);
+    const viewportPoint = getViewportPosFromMouse(e);
 
     // Gestion du clic molette ou outil grab pour le panning
     if (e.button === 1 || currentTool === "grab") {
@@ -756,7 +817,7 @@ const Canvas: React.FC<CanvasProps> = ({
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const point = getMousePos(e);
-    const viewportPoint = getViewportMousePos(e);
+    const viewportPoint = getViewportPosFromMouse(e);
 
     if (isPanning) {
       // Gestion du panning
@@ -842,6 +903,308 @@ const Canvas: React.FC<CanvasProps> = ({
     }
   };
 
+  // === GESTION DES ÉVÉNEMENTS TACTILES ET STYLET ===
+
+  // Variables pour gérer l'état des événements tactiles
+  const [activePointerId, setActivePointerId] = useState<number | null>(null);
+  const [isPanningTouch, setIsPanningTouch] = useState(false);
+  const [lastTouchPanPoint, setLastTouchPanPoint] = useState<Point>({
+    x: 0,
+    y: 0,
+  });
+
+  // Gestionnaire pour le début des événements pointer/touch
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+
+    // Capturer le pointeur pour garantir la réception des événements suivants
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    const point = getTouchPos(e);
+    const viewportPoint = getViewportMousePos(e.clientX, e.clientY);
+
+    // Gestion du panning avec le doigt ou un stylet avec bouton secondaire
+    if (e.pointerType === "touch" && e.isPrimary && currentTool === "grab") {
+      setActivePointerId(e.pointerId);
+      setIsPanningTouch(true);
+      setLastTouchPanPoint(viewportPoint);
+      return;
+    }
+
+    // Pour les stylets, traiter comme un événement de dessin
+    if (e.pointerType === "pen" || (e.pointerType === "touch" && e.isPrimary)) {
+      setActivePointerId(e.pointerId);
+
+      // Vérifier si le point est dans les limites du canvas virtuel
+      if (
+        point.x < 0 ||
+        point.x > CANVAS_WIDTH ||
+        point.y < 0 ||
+        point.y > CANVAS_HEIGHT
+      ) {
+        return;
+      }
+
+      if (currentTool === "colorpicker") {
+        const color = getColorAtPoint(point);
+        onColorChange(color);
+      } else {
+        const drawingTools = [
+          "brush",
+          "pencil",
+          "marker",
+          "spray",
+          "calligraphy",
+          "watercolor",
+          "eraser",
+          "line",
+          "circle",
+          "rectangle",
+        ];
+        if (drawingTools.includes(currentTool)) {
+          onStartDrawing(point);
+        }
+      }
+    }
+  };
+
+  // Gestionnaire pour le mouvement des événements pointer/touch
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+
+    // Ignorer les événements qui ne correspondent pas au pointeur actif
+    if (activePointerId !== null && e.pointerId !== activePointerId) {
+      return;
+    }
+
+    const point = getTouchPos(e);
+    const viewportPoint = getViewportMousePos(e.clientX, e.clientY);
+
+    if (isPanningTouch && e.pointerId === activePointerId) {
+      // Gestion du panning tactile
+      const deltaX = viewportPoint.x - lastTouchPanPoint.x;
+      const deltaY = viewportPoint.y - lastTouchPanPoint.y;
+
+      setViewport((prev) => {
+        // Calculer les nouvelles coordonnées
+        let newX = prev.x + deltaX;
+        let newY = prev.y + deltaY;
+
+        // Limites pour empêcher le canvas de sortir complètement de vue
+        const scaledCanvasWidth = CANVAS_WIDTH * prev.scale;
+        const scaledCanvasHeight = CANVAS_HEIGHT * prev.scale;
+        const margin = 100;
+
+        const minX = -(scaledCanvasWidth - margin);
+        const maxX = containerSize.width - margin;
+        const minY = -(scaledCanvasHeight - margin);
+        const maxY = containerSize.height - margin;
+
+        newX = Math.max(minX, Math.min(maxX, newX));
+        newY = Math.max(minY, Math.min(maxY, newY));
+
+        return {
+          ...prev,
+          x: newX,
+          y: newY,
+        };
+      });
+
+      setLastTouchPanPoint(viewportPoint);
+      return;
+    }
+
+    // Mise à jour du curseur si dans les limites du canvas
+    if (
+      point.x >= 0 &&
+      point.x <= CANVAS_WIDTH &&
+      point.y >= 0 &&
+      point.y <= CANVAS_HEIGHT
+    ) {
+      onMouseMove(point);
+    }
+
+    // Dessin en cours
+    if (
+      isDrawing &&
+      e.pointerId === activePointerId &&
+      currentTool !== "grab" &&
+      currentTool !== "colorpicker"
+    ) {
+      if (
+        point.x >= 0 &&
+        point.x <= CANVAS_WIDTH &&
+        point.y >= 0 &&
+        point.y <= CANVAS_HEIGHT
+      ) {
+        onDraw(point);
+      }
+    }
+  };
+
+  // Gestionnaire pour la fin des événements pointer/touch
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+
+    // Libérer la capture du pointeur
+    e.currentTarget.releasePointerCapture(e.pointerId);
+
+    if (e.pointerId === activePointerId) {
+      if (isPanningTouch) {
+        setIsPanningTouch(false);
+      }
+
+      if (isDrawing) {
+        onEndDrawing();
+      }
+
+      setActivePointerId(null);
+    }
+  };
+
+  // Gestionnaire pour l'annulation des événements pointer/touch
+  const handlePointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+
+    if (e.pointerId === activePointerId) {
+      if (isPanningTouch) {
+        setIsPanningTouch(false);
+      }
+
+      if (isDrawing) {
+        onEndDrawing();
+      }
+
+      setActivePointerId(null);
+    }
+  };
+
+  // Gestionnaires pour les événements touch (compatibilité)
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const point = getTouchPos(e);
+      const viewportPoint = getViewportMousePos(touch.clientX, touch.clientY);
+
+      if (currentTool === "grab") {
+        setIsPanningTouch(true);
+        setLastTouchPanPoint(viewportPoint);
+        return;
+      }
+
+      // Vérifier si le point est dans les limites du canvas virtuel
+      if (
+        point.x < 0 ||
+        point.x > CANVAS_WIDTH ||
+        point.y < 0 ||
+        point.y > CANVAS_HEIGHT
+      ) {
+        return;
+      }
+
+      if (currentTool === "colorpicker") {
+        const color = getColorAtPoint(point);
+        onColorChange(color);
+      } else {
+        const drawingTools = [
+          "brush",
+          "pencil",
+          "marker",
+          "spray",
+          "calligraphy",
+          "watercolor",
+          "eraser",
+          "line",
+          "circle",
+          "rectangle",
+        ];
+        if (drawingTools.includes(currentTool)) {
+          onStartDrawing(point);
+        }
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const point = getTouchPos(e);
+      const viewportPoint = getViewportMousePos(touch.clientX, touch.clientY);
+
+      if (isPanningTouch) {
+        const deltaX = viewportPoint.x - lastTouchPanPoint.x;
+        const deltaY = viewportPoint.y - lastTouchPanPoint.y;
+
+        setViewport((prev) => {
+          let newX = prev.x + deltaX;
+          let newY = prev.y + deltaY;
+
+          const scaledCanvasWidth = CANVAS_WIDTH * prev.scale;
+          const scaledCanvasHeight = CANVAS_HEIGHT * prev.scale;
+          const margin = 100;
+
+          const minX = -(scaledCanvasWidth - margin);
+          const maxX = containerSize.width - margin;
+          const minY = -(scaledCanvasHeight - margin);
+          const maxY = containerSize.height - margin;
+
+          newX = Math.max(minX, Math.min(maxX, newX));
+          newY = Math.max(minY, Math.min(maxY, newY));
+
+          return {
+            ...prev,
+            x: newX,
+            y: newY,
+          };
+        });
+
+        setLastTouchPanPoint(viewportPoint);
+        return;
+      }
+
+      if (
+        point.x >= 0 &&
+        point.x <= CANVAS_WIDTH &&
+        point.y >= 0 &&
+        point.y <= CANVAS_HEIGHT
+      ) {
+        onMouseMove(point);
+      }
+
+      if (
+        isDrawing &&
+        currentTool !== "grab" &&
+        currentTool !== "colorpicker"
+      ) {
+        if (
+          point.x >= 0 &&
+          point.x <= CANVAS_WIDTH &&
+          point.y >= 0 &&
+          point.y <= CANVAS_HEIGHT
+        ) {
+          onDraw(point);
+        }
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+
+    if (isPanningTouch) {
+      setIsPanningTouch(false);
+      return;
+    }
+
+    if (isDrawing) {
+      onEndDrawing();
+    }
+  };
+
   // Gestion du zoom avec la molette
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
@@ -849,7 +1212,7 @@ const Canvas: React.FC<CanvasProps> = ({
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(5, viewport.scale * delta));
 
-    const viewportPoint = getViewportMousePos(e);
+    const viewportPoint = getViewportMousePos(e.clientX, e.clientY);
 
     setViewport((prev) => {
       const scaleChange = newScale / prev.scale;
@@ -897,13 +1260,28 @@ const Canvas: React.FC<CanvasProps> = ({
         width={containerSize.width}
         height={containerSize.height}
         className={`canvas ${currentTool}`}
+        // Événements de souris traditionnels
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         onWheel={handleWheel}
+        // Événements pointer (stylet, souris, touch moderne)
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        // Événements tactiles (compatibilité)
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         onContextMenu={(e) => e.preventDefault()} // Empêcher le menu contextuel
-        style={{ cursor: getCursorStyle() }}
+        style={{
+          cursor: getCursorStyle(),
+          // Optimisations pour les tablettes graphiques
+          touchAction: "none", // Désactive les gestes natifs du navigateur
+          userSelect: "none", // Empêche la sélection de texte
+        }}
       />
 
       {/* Indicateur de zoom et position avec contrôles */}
