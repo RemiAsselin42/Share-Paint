@@ -28,7 +28,7 @@ const TOOL_CONFIG = {
   //   marker: { icon: "fas fa-marker", label: "Marqueur" },
   //   spray: { icon: "fas fa-spray-can", label: "Aérosol" },
   calligraphy: { icon: "fas fa-feather-alt", label: "Calligraphie" },
-  watercolor: { icon: "fas fa-tint", label: "Aquarelle" },
+  marker: { icon: "fas fa-highlighter", label: "Marqueur" },
   eraser: { icon: "fas fa-eraser", label: "Gomme" },
   line: { icon: "fas fa-minus", label: "Ligne" },
   circle: { icon: "far fa-circle", label: "Cercle" },

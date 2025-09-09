@@ -28,16 +28,11 @@ const useCanvas = () => {
   const currentDrawingRef = useRef<DrawingData | null>(null);
   const throttleRef = useRef<number | null>(null);
 
-  // Système de synchronisation avancé
-  const pointsBufferRef = useRef<Point[]>([]);
-  const lastSentPointRef = useRef<Point | null>(null);
+  // Système de synchronisation optimisé
   const lastCursorSentRef = useRef<number>(0);
-  const sendIntervalRef = useRef<number | null>(null);
 
   // Constantes pour l'optimisation
-  const SEND_INTERVAL = 16; // ~60fps
   const MIN_DISTANCE = 2; // Distance minimale entre points pour éviter le spam
-  const MAX_BUFFER_SIZE = 5; // Taille maximale du buffer de points
 
   // Fonctions utilitaires pour la synchronisation
   const calculateDistance = useCallback((p1: Point, p2: Point): number => {
@@ -59,35 +54,7 @@ const useCanvas = () => {
     []
   );
 
-  const flushPointsBuffer = useCallback(() => {
-    if (pointsBufferRef.current.length === 0 || !currentDrawingRef.current) {
-      return;
-    }
-
-    const bufferCopy = [...pointsBufferRef.current];
-    pointsBufferRef.current = [];
-
-    const updatedDrawing = {
-      ...currentDrawingRef.current,
-      points: [...currentDrawingRef.current.points, ...bufferCopy],
-      timestamp: Date.now(),
-    };
-
-    currentDrawingRef.current = updatedDrawing;
-
-    // Mettre à jour l'état local immédiatement
-    setState((prev) => ({
-      ...prev,
-      drawings: [
-        ...prev.drawings.filter((d) => d.id !== updatedDrawing.id),
-        updatedDrawing,
-      ],
-    }));
-
-    // Envoyer au serveur
-    socketService.sendDrawingData(updatedDrawing);
-    lastSentPointRef.current = bufferCopy[bufferCopy.length - 1] || null;
-  }, []);
+  // Supprimé: fonction flushPointsBuffer plus utilisée avec les nouvelles optimisations
 
   // Générer une couleur aléatoire pour l'utilisateur
   const getUserColor = useCallback(() => {
@@ -193,7 +160,7 @@ const useCanvas = () => {
     ]
   );
 
-  // Continuer le dessin avec système de buffering avancé
+  // Continuer le dessin avec système de buffering optimisé
   const draw = useCallback(
     (point: Point) => {
       if (!state.isDrawing || !currentDrawingRef.current || !state.roomId) {
@@ -225,7 +192,26 @@ const useCanvas = () => {
 
       currentDrawingRef.current = updatedDrawing;
 
-      // Mise à jour locale immédiate
+      // Pour garantir la cohérence entre instances, on n'envoie que les traits complets
+      // Le rendu local utilise les mêmes données que celles envoyées
+      if (state.currentTool === "line") {
+        // Pour l'outil ligne, on attend la fin pour envoyer
+        // Mise à jour locale seulement
+        setState((prev) => ({
+          ...prev,
+          drawings: [
+            ...prev.drawings.filter((d) => d.id !== updatedDrawing.id),
+            updatedDrawing,
+          ],
+        }));
+        return;
+      }
+
+      // Pour les autres outils : envoyer immédiatement ET mettre à jour localement
+      // avec les mêmes données pour garantir la cohérence
+      socketService.sendDrawingData(updatedDrawing);
+
+      // Mise à jour locale avec les mêmes données exactes
       setState((prev) => ({
         ...prev,
         drawings: [
@@ -233,26 +219,6 @@ const useCanvas = () => {
           updatedDrawing,
         ],
       }));
-
-      // Gestion différenciée selon l'outil
-      if (state.currentTool === "line") {
-        // Pour l'outil ligne, on attend la fin pour envoyer
-        return;
-      }
-
-      // Système de buffering intelligent pour les autres outils
-      pointsBufferRef.current.push(...pointsToAdd);
-
-      // Envoyer immédiatement si le buffer est plein ou si assez de temps s'est écoulé
-      if (pointsBufferRef.current.length >= MAX_BUFFER_SIZE) {
-        flushPointsBuffer();
-      } else if (!sendIntervalRef.current) {
-        // Démarrer un timer pour envoyer les points accumulés
-        sendIntervalRef.current = window.setTimeout(() => {
-          flushPointsBuffer();
-          sendIntervalRef.current = null;
-        }, SEND_INTERVAL);
-      }
     },
     [
       state.isDrawing,
@@ -260,24 +226,12 @@ const useCanvas = () => {
       state.currentTool,
       calculateDistance,
       interpolatePoints,
-      flushPointsBuffer,
     ]
   );
 
-  // Terminer le dessin avec nettoyage du buffer
+  // Terminer le dessin simplifié
   const endDrawing = useCallback(() => {
     if (!state.isDrawing || !currentDrawingRef.current || !state.roomId) return;
-
-    // Vider le buffer de points en attente
-    if (pointsBufferRef.current.length > 0) {
-      flushPointsBuffer();
-    }
-
-    // Nettoyer les timers
-    if (sendIntervalRef.current) {
-      clearTimeout(sendIntervalRef.current);
-      sendIntervalRef.current = null;
-    }
 
     const finalDrawing = currentDrawingRef.current;
 
@@ -319,14 +273,12 @@ const useCanvas = () => {
 
     // Réinitialiser les références
     currentDrawingRef.current = null;
-    pointsBufferRef.current = [];
-    lastSentPointRef.current = null;
 
     if (throttleRef.current) {
       clearTimeout(throttleRef.current);
       throttleRef.current = null;
     }
-  }, [state.isDrawing, state.roomId, state.currentTool, flushPointsBuffer]);
+  }, [state.isDrawing, state.roomId, state.currentTool]);
 
   // Gérer le mouvement de la souris (curseur) avec throttling optimisé
   const handleMouseMove = useCallback(
@@ -555,33 +507,20 @@ const useCanvas = () => {
     const handleDrawingData = (data: DrawingData) => {
       console.log("Données de dessin reçues:", data);
       setState((prev) => {
-        // Gestion des mises à jour incrémentales
-        if (data.isIncremental && data.basePointCount !== undefined) {
-          const existingDrawing = prev.drawings.find((d) => d.id === data.id);
-          if (
-            existingDrawing &&
-            existingDrawing.points.length === data.basePointCount
-          ) {
-            // Ajouter les nouveaux points à la fin du dessin existant
-            const updatedDrawing = {
-              ...existingDrawing,
-              points: [...existingDrawing.points, ...data.points],
-              timestamp: data.timestamp,
-            };
-            return {
-              ...prev,
-              drawings: [
-                ...prev.drawings.filter((d) => d.id !== data.id),
-                updatedDrawing,
-              ],
-            };
-          }
-        }
+        // Remplacer directement avec les données exactes reçues
+        // Cela garantit que tous les clients ont exactement les mêmes données
+        const filteredDrawings = prev.drawings.filter((d) => d.id !== data.id);
 
-        // Mise à jour complète ou nouveau dessin
         return {
           ...prev,
-          drawings: [...prev.drawings.filter((d) => d.id !== data.id), data],
+          drawings: [
+            ...filteredDrawings,
+            {
+              ...data,
+              // S'assurer que les timestamps sont cohérents
+              timestamp: data.timestamp,
+            },
+          ].sort((a, b) => a.timestamp - b.timestamp), // Tri par timestamp pour cohérence
         };
       });
     };

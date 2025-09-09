@@ -35,7 +35,6 @@ export type DrawingTool =
   | "marker"
   | "spray"
   | "calligraphy"
-  | "watercolor"
   | "eraser"
   | "line"
   | "circle"

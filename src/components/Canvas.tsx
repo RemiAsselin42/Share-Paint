@@ -36,6 +36,11 @@ const Canvas: React.FC<CanvasProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Canvas de cache pour optimiser les performances
+  const cacheCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastDrawingsCountRef = useRef<number>(0);
+  const lastDrawingsHashRef = useRef<string>("");
+
   // Canvas avec taille fixe de 1000x1000
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 1000;
@@ -149,18 +154,40 @@ const Canvas: React.FC<CanvasProps> = ({
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
 
+      // Paramètres pour la calligraphie plus expressive
+      const maxThickness = lineWidth * 2.5; // Plus d'amplitude
+      const minThickness = lineWidth * 0.1; // Plus de contraste
+
       for (let i = 0; i < points.length - 1; i++) {
         const p1 = points[i];
         const p2 = points[i + 1];
 
-        // Épaisseur variable basée sur la vitesse
+        // Épaisseur variable basée sur la vitesse ET la direction
         const dx = p2.x - p1.x;
         const dy = p2.y - p1.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
-        const speed = Math.min(distance, 10);
-        const thickness = lineWidth * (1 - speed / 20);
+        const speed = Math.min(distance, 15); // Seuil plus élevé
 
-        ctx.lineWidth = Math.max(thickness, 1);
+        // Facteur de vitesse plus dramatique
+        const speedFactor = 1 - Math.pow(speed / 15, 0.7);
+
+        // Ajouter un effet basé sur l'angle pour simuler l'inclinaison du pinceau
+        const angle = Math.atan2(dy, dx);
+        const angleFactor = Math.abs(Math.sin(angle * 2)) * 0.3 + 0.7; // Variation selon l'angle
+
+        // Combiner vitesse et angle pour l'épaisseur
+        const thickness =
+          minThickness +
+          (maxThickness - minThickness) * speedFactor * angleFactor;
+
+        // Utiliser la pression si disponible
+        const pressure = p1.pressure || 0.5;
+        const finalThickness = thickness * (0.5 + pressure * 0.5);
+
+        ctx.lineWidth = Math.max(finalThickness, minThickness);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
         ctx.beginPath();
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
@@ -214,7 +241,7 @@ const Canvas: React.FC<CanvasProps> = ({
           ctx.globalCompositeOperation = "source-over";
           break;
 
-        case "watercolor":
+        case "marker":
           ctx.globalCompositeOperation = "multiply";
           ctx.globalAlpha = Math.min(opacity, 0.6);
           ctx.shadowColor = color;
@@ -262,33 +289,47 @@ const Canvas: React.FC<CanvasProps> = ({
         ctx.rect(startPoint.x, startPoint.y, width, height);
         ctx.stroke();
       } else if (points.length === 1) {
-        // Point unique avec pression si disponible
+        // Point unique avec gestion différenciée selon l'outil
         const point = points[0];
-        const pressure = point.pressure || 0.5;
-        const pressuredSize = lineWidth * pressure;
 
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, pressuredSize / 2, 0, Math.PI * 2);
-        ctx.fill();
+        if (tool === "pencil") {
+          // Crayon : taille constante, pas de variation de pression
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, lineWidth / 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Autres outils : avec pression
+          const pressure = point.pressure || 0.5;
+          const pressuredSize = lineWidth * pressure;
+
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, pressuredSize / 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else if (points.length === 2) {
-        // Deux points : ligne simple avec pression
+        // Deux points : ligne simple
         const startPoint = points[0];
         const endPoint = points[1];
 
-        // Utiliser la pression moyenne si disponible
-        const startPressure = startPoint.pressure || 0.5;
-        const endPressure = endPoint.pressure || 0.5;
-        const avgPressure = (startPressure + endPressure) / 2;
+        if (tool === "pencil") {
+          // Crayon : épaisseur constante
+          ctx.lineWidth = lineWidth;
+        } else {
+          // Autres outils : avec pression moyenne
+          const startPressure = startPoint.pressure || 0.5;
+          const endPressure = endPoint.pressure || 0.5;
+          const avgPressure = (startPressure + endPressure) / 2;
+          ctx.lineWidth = lineWidth * avgPressure;
+        }
 
-        ctx.lineWidth = lineWidth * avgPressure;
         ctx.beginPath();
         ctx.moveTo(startPoint.x, startPoint.y);
         ctx.lineTo(endPoint.x, endPoint.y);
         ctx.stroke();
       } else {
-        // Courbe lissée avec pression variable pour les outils de pinceau
-        if (tool === "brush" || tool === "pencil") {
-          // Dessiner avec des segments de taille variable selon la pression
+        // Courbe lissée avec gestion différenciée selon l'outil
+        if (tool === "brush") {
+          // Pinceau : avec des segments de taille variable selon la pression
           for (let i = 0; i < points.length - 1; i++) {
             const currentPoint = points[i];
             const nextPoint = points[i + 1];
@@ -306,8 +347,31 @@ const Canvas: React.FC<CanvasProps> = ({
             ctx.lineTo(nextPoint.x, nextPoint.y);
             ctx.stroke();
           }
+        } else if (tool === "pencil") {
+          // Crayon : courbe lissée avec épaisseur constante (pas de variation de pression)
+          ctx.lineWidth = lineWidth; // Épaisseur fixe
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+
+          for (let i = 1; i < points.length - 2; i++) {
+            const cp1x = (points[i].x + points[i + 1].x) / 2;
+            const cp1y = (points[i].y + points[i + 1].y) / 2;
+            ctx.quadraticCurveTo(points[i].x, points[i].y, cp1x, cp1y);
+          }
+
+          if (points.length > 2) {
+            ctx.quadraticCurveTo(
+              points[points.length - 2].x,
+              points[points.length - 2].y,
+              points[points.length - 1].x,
+              points[points.length - 1].y
+            );
+          }
+
+          ctx.stroke();
         } else {
-          // Courbe lissée classique pour les autres outils
+          // Autres outils : courbe lissée avec épaisseur constante
+          ctx.lineWidth = lineWidth; // Épaisseur fixe pour tous les autres outils
           ctx.beginPath();
           ctx.moveTo(points[0].x, points[0].y);
 
@@ -429,7 +493,7 @@ const Canvas: React.FC<CanvasProps> = ({
       switch (tool) {
         case "brush":
         case "pencil":
-        case "watercolor":
+        case "marker":
         case "calligraphy":
           // Cercle avec bordure pour le pinceau
           svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${cursorSize}" height="${cursorSize}" viewBox="0 0 ${cursorSize} ${cursorSize}">
@@ -475,12 +539,78 @@ const Canvas: React.FC<CanvasProps> = ({
     []
   );
 
+  // Fonction pour créer un hash des dessins pour détecter les changements
+  const createDrawingsHash = useCallback((drawings: DrawingData[]): string => {
+    return drawings
+      .filter((drawing) => !drawing.isDeleted)
+      .map(
+        (drawing) =>
+          `${drawing.id}-${drawing.timestamp}-${drawing.points.length}`
+      )
+      .join("|");
+  }, []);
+
+  // Fonction pour initialiser ou obtenir le canvas de cache
+  const getCacheCanvas = useCallback((): HTMLCanvasElement => {
+    if (!cacheCanvasRef.current) {
+      cacheCanvasRef.current = document.createElement("canvas");
+      cacheCanvasRef.current.width = CANVAS_WIDTH;
+      cacheCanvasRef.current.height = CANVAS_HEIGHT;
+    }
+    return cacheCanvasRef.current;
+  }, [CANVAS_WIDTH, CANVAS_HEIGHT]);
+
+  // Fonction pour regénérer complètement le cache
+  const regenerateCache = useCallback(() => {
+    const cacheCanvas = getCacheCanvas();
+    const cacheCtx = cacheCanvas.getContext("2d");
+    if (!cacheCtx) return;
+
+    // Vider le cache
+    cacheCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Fond blanc pour le cache
+    cacheCtx.fillStyle = "#ffffff";
+    cacheCtx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Dessiner tous les dessins non supprimés dans l'ordre chronologique
+    drawings
+      .filter((drawing) => !drawing.isDeleted)
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .forEach((drawing) => {
+        if (drawing.points.length > 0) {
+          drawLine(
+            cacheCtx,
+            drawing.points,
+            drawing.color,
+            drawing.lineWidth,
+            drawing.opacity || 1,
+            drawing.tool
+          );
+        }
+      });
+  }, [getCacheCanvas, drawings, drawLine, CANVAS_WIDTH, CANVAS_HEIGHT]);
+
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    // Vérifier si nous devons mettre à jour le cache
+    const currentDrawingsHash = createDrawingsHash(drawings);
+    const currentDrawingsCount = drawings.filter((d) => !d.isDeleted).length;
+
+    // Si le hash a changé ou c'est le premier rendu, mettre à jour le cache
+    if (
+      lastDrawingsHashRef.current !== currentDrawingsHash ||
+      !cacheCanvasRef.current
+    ) {
+      regenerateCache();
+      lastDrawingsHashRef.current = currentDrawingsHash;
+      lastDrawingsCountRef.current = currentDrawingsCount;
+    }
 
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -501,37 +631,9 @@ const Canvas: React.FC<CanvasProps> = ({
     ctx.lineWidth = 2 / viewport.scale; // Ajuster l'épaisseur en fonction du zoom
     ctx.strokeRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // Créer un canvas temporaire pour gérer la gomme correctement
-    const tempCanvas = document.createElement("canvas");
-    const tempCtx = tempCanvas.getContext("2d");
-    if (tempCtx) {
-      tempCanvas.width = CANVAS_WIDTH;
-      tempCanvas.height = CANVAS_HEIGHT;
-
-      // Fond blanc pour le canvas temporaire
-      tempCtx.fillStyle = "#ffffff";
-      tempCtx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      // Dessiner tous les dessins non supprimés sur le canvas temporaire dans l'ordre chronologique
-      drawings
-        .filter((drawing) => !drawing.isDeleted) // Filtrer les dessins supprimés
-        .sort((a, b) => a.timestamp - b.timestamp) // Trier par ordre chronologique
-        .forEach((drawing) => {
-          if (drawing.points.length > 0) {
-            drawLine(
-              tempCtx,
-              drawing.points,
-              drawing.color,
-              drawing.lineWidth,
-              drawing.opacity || 1,
-              drawing.tool
-            );
-          }
-        });
-
-      // Dessiner le canvas temporaire sur le canvas principal
-      ctx.drawImage(tempCanvas, 0, 0);
-    }
+    // Dessiner le cache au lieu de redessiner tous les traits
+    const cacheCanvas = getCacheCanvas();
+    ctx.drawImage(cacheCanvas, 0, 0);
 
     // Draw other users' cursors
     users.forEach((user, id) => {
@@ -546,11 +648,13 @@ const Canvas: React.FC<CanvasProps> = ({
     drawings,
     users,
     userId,
-    drawLine,
     drawCursor,
     viewport,
     CANVAS_WIDTH,
     CANVAS_HEIGHT,
+    createDrawingsHash,
+    regenerateCache,
+    getCacheCanvas,
   ]);
 
   // Référence pour éviter la re-exécution du useEffect lors des changements de viewport
@@ -802,7 +906,6 @@ const Canvas: React.FC<CanvasProps> = ({
         "marker",
         "spray",
         "calligraphy",
-        "watercolor",
         "eraser",
         "line",
         "circle",
@@ -915,167 +1018,185 @@ const Canvas: React.FC<CanvasProps> = ({
 
   // Gestionnaire pour le début des événements pointer/touch
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
+    // Seulement prévenir les événements par défaut pour les stylets et le tactile
+    // Laisser les événements de souris passer aux gestionnaires traditionnels
+    if (e.pointerType === "pen" || e.pointerType === "touch") {
+      e.preventDefault();
 
-    // Capturer le pointeur pour garantir la réception des événements suivants
-    e.currentTarget.setPointerCapture(e.pointerId);
+      // Capturer le pointeur pour garantir la réception des événements suivants
+      e.currentTarget.setPointerCapture(e.pointerId);
 
-    const point = getTouchPos(e);
-    const viewportPoint = getViewportMousePos(e.clientX, e.clientY);
+      const point = getTouchPos(e);
+      const viewportPoint = getViewportMousePos(e.clientX, e.clientY);
 
-    // Gestion du panning avec le doigt ou un stylet avec bouton secondaire
-    if (e.pointerType === "touch" && e.isPrimary && currentTool === "grab") {
-      setActivePointerId(e.pointerId);
-      setIsPanningTouch(true);
-      setLastTouchPanPoint(viewportPoint);
-      return;
-    }
-
-    // Pour les stylets, traiter comme un événement de dessin
-    if (e.pointerType === "pen" || (e.pointerType === "touch" && e.isPrimary)) {
-      setActivePointerId(e.pointerId);
-
-      // Vérifier si le point est dans les limites du canvas virtuel
-      if (
-        point.x < 0 ||
-        point.x > CANVAS_WIDTH ||
-        point.y < 0 ||
-        point.y > CANVAS_HEIGHT
-      ) {
+      // Gestion du panning avec le doigt ou un stylet avec bouton secondaire
+      if (e.pointerType === "touch" && e.isPrimary && currentTool === "grab") {
+        setActivePointerId(e.pointerId);
+        setIsPanningTouch(true);
+        setLastTouchPanPoint(viewportPoint);
         return;
       }
 
-      if (currentTool === "colorpicker") {
-        const color = getColorAtPoint(point);
-        onColorChange(color);
-      } else {
-        const drawingTools = [
-          "brush",
-          "pencil",
-          "marker",
-          "spray",
-          "calligraphy",
-          "watercolor",
-          "eraser",
-          "line",
-          "circle",
-          "rectangle",
-        ];
-        if (drawingTools.includes(currentTool)) {
-          onStartDrawing(point);
+      // Pour les stylets et le tactile, traiter comme un événement de dessin
+      if (
+        e.pointerType === "pen" ||
+        (e.pointerType === "touch" && e.isPrimary)
+      ) {
+        setActivePointerId(e.pointerId);
+
+        // Vérifier si le point est dans les limites du canvas virtuel
+        if (
+          point.x < 0 ||
+          point.x > CANVAS_WIDTH ||
+          point.y < 0 ||
+          point.y > CANVAS_HEIGHT
+        ) {
+          return;
+        }
+
+        if (currentTool === "colorpicker") {
+          const color = getColorAtPoint(point);
+          onColorChange(color);
+        } else {
+          const drawingTools = [
+            "brush",
+            "pencil",
+            "marker",
+            "spray",
+            "calligraphy",
+            "eraser",
+            "line",
+            "circle",
+            "rectangle",
+          ];
+          if (drawingTools.includes(currentTool)) {
+            onStartDrawing(point);
+          }
         }
       }
     }
+    // Pour la souris (pointerType === "mouse"), laisser passer à handleMouseDown
   };
 
   // Gestionnaire pour le mouvement des événements pointer/touch
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
+    // Seulement traiter les stylets et le tactile, laisser la souris aux gestionnaires traditionnels
+    if (e.pointerType === "pen" || e.pointerType === "touch") {
+      e.preventDefault();
 
-    // Ignorer les événements qui ne correspondent pas au pointeur actif
-    if (activePointerId !== null && e.pointerId !== activePointerId) {
-      return;
-    }
+      // Ignorer les événements qui ne correspondent pas au pointeur actif
+      if (activePointerId !== null && e.pointerId !== activePointerId) {
+        return;
+      }
 
-    const point = getTouchPos(e);
-    const viewportPoint = getViewportMousePos(e.clientX, e.clientY);
+      const point = getTouchPos(e);
+      const viewportPoint = getViewportMousePos(e.clientX, e.clientY);
 
-    if (isPanningTouch && e.pointerId === activePointerId) {
-      // Gestion du panning tactile
-      const deltaX = viewportPoint.x - lastTouchPanPoint.x;
-      const deltaY = viewportPoint.y - lastTouchPanPoint.y;
+      if (isPanningTouch && e.pointerId === activePointerId) {
+        // Gestion du panning tactile
+        const deltaX = viewportPoint.x - lastTouchPanPoint.x;
+        const deltaY = viewportPoint.y - lastTouchPanPoint.y;
 
-      setViewport((prev) => {
-        // Calculer les nouvelles coordonnées
-        let newX = prev.x + deltaX;
-        let newY = prev.y + deltaY;
+        setViewport((prev) => {
+          // Calculer les nouvelles coordonnées
+          let newX = prev.x + deltaX;
+          let newY = prev.y + deltaY;
 
-        // Limites pour empêcher le canvas de sortir complètement de vue
-        const scaledCanvasWidth = CANVAS_WIDTH * prev.scale;
-        const scaledCanvasHeight = CANVAS_HEIGHT * prev.scale;
-        const margin = 100;
+          // Limites pour empêcher le canvas de sortir complètement de vue
+          const scaledCanvasWidth = CANVAS_WIDTH * prev.scale;
+          const scaledCanvasHeight = CANVAS_HEIGHT * prev.scale;
+          const margin = 100;
 
-        const minX = -(scaledCanvasWidth - margin);
-        const maxX = containerSize.width - margin;
-        const minY = -(scaledCanvasHeight - margin);
-        const maxY = containerSize.height - margin;
+          const minX = -(scaledCanvasWidth - margin);
+          const maxX = containerSize.width - margin;
+          const minY = -(scaledCanvasHeight - margin);
+          const maxY = containerSize.height - margin;
 
-        newX = Math.max(minX, Math.min(maxX, newX));
-        newY = Math.max(minY, Math.min(maxY, newY));
+          newX = Math.max(minX, Math.min(maxX, newX));
+          newY = Math.max(minY, Math.min(maxY, newY));
 
-        return {
-          ...prev,
-          x: newX,
-          y: newY,
-        };
-      });
+          return {
+            ...prev,
+            x: newX,
+            y: newY,
+          };
+        });
 
-      setLastTouchPanPoint(viewportPoint);
-      return;
-    }
+        setLastTouchPanPoint(viewportPoint);
+        return;
+      }
 
-    // Mise à jour du curseur si dans les limites du canvas
-    if (
-      point.x >= 0 &&
-      point.x <= CANVAS_WIDTH &&
-      point.y >= 0 &&
-      point.y <= CANVAS_HEIGHT
-    ) {
-      onMouseMove(point);
-    }
-
-    // Dessin en cours
-    if (
-      isDrawing &&
-      e.pointerId === activePointerId &&
-      currentTool !== "grab" &&
-      currentTool !== "colorpicker"
-    ) {
+      // Mise à jour du curseur si dans les limites du canvas
       if (
         point.x >= 0 &&
         point.x <= CANVAS_WIDTH &&
         point.y >= 0 &&
         point.y <= CANVAS_HEIGHT
       ) {
-        onDraw(point);
+        onMouseMove(point);
+      }
+
+      // Dessin en cours
+      if (
+        isDrawing &&
+        e.pointerId === activePointerId &&
+        currentTool !== "grab" &&
+        currentTool !== "colorpicker"
+      ) {
+        if (
+          point.x >= 0 &&
+          point.x <= CANVAS_WIDTH &&
+          point.y >= 0 &&
+          point.y <= CANVAS_HEIGHT
+        ) {
+          onDraw(point);
+        }
       }
     }
+    // Pour la souris (pointerType === "mouse"), laisser passer à handleMouseMove
   };
 
   // Gestionnaire pour la fin des événements pointer/touch
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
+    // Seulement traiter les stylets et le tactile, laisser la souris aux gestionnaires traditionnels
+    if (e.pointerType === "pen" || e.pointerType === "touch") {
+      e.preventDefault();
 
-    // Libérer la capture du pointeur
-    e.currentTarget.releasePointerCapture(e.pointerId);
+      // Libérer la capture du pointeur
+      e.currentTarget.releasePointerCapture(e.pointerId);
 
-    if (e.pointerId === activePointerId) {
-      if (isPanningTouch) {
-        setIsPanningTouch(false);
+      if (e.pointerId === activePointerId) {
+        if (isPanningTouch) {
+          setIsPanningTouch(false);
+        }
+
+        if (isDrawing) {
+          onEndDrawing();
+        }
+
+        setActivePointerId(null);
       }
-
-      if (isDrawing) {
-        onEndDrawing();
-      }
-
-      setActivePointerId(null);
     }
+    // Pour la souris (pointerType === "mouse"), laisser passer à handleMouseUp
   };
 
   // Gestionnaire pour l'annulation des événements pointer/touch
   const handlePointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
+    // Seulement traiter les stylets et le tactile
+    if (e.pointerType === "pen" || e.pointerType === "touch") {
+      e.preventDefault();
 
-    if (e.pointerId === activePointerId) {
-      if (isPanningTouch) {
-        setIsPanningTouch(false);
+      if (e.pointerId === activePointerId) {
+        if (isPanningTouch) {
+          setIsPanningTouch(false);
+        }
+
+        if (isDrawing) {
+          onEndDrawing();
+        }
+
+        setActivePointerId(null);
       }
-
-      if (isDrawing) {
-        onEndDrawing();
-      }
-
-      setActivePointerId(null);
     }
   };
 
@@ -1114,7 +1235,6 @@ const Canvas: React.FC<CanvasProps> = ({
           "marker",
           "spray",
           "calligraphy",
-          "watercolor",
           "eraser",
           "line",
           "circle",
