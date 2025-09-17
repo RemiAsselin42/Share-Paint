@@ -145,10 +145,8 @@ const useCanvas = () => {
         drawings: [...prev.drawings, drawingData], // Ajouter le dessin immédiatement
       }));
 
-      // Pour l'outil ligne, on n'envoie que le début
-      if (state.currentTool !== "line") {
-        socketService.sendDrawingData(drawingData);
-      }
+      // Envoyer une première version pour tous les outils (y compris "line") afin d'afficher le trait en temps réel
+      socketService.sendDrawingData(drawingData);
     },
     [
       state.roomId,
@@ -192,23 +190,7 @@ const useCanvas = () => {
 
       currentDrawingRef.current = updatedDrawing;
 
-      // Pour garantir la cohérence entre instances, on n'envoie que les traits complets
-      // Le rendu local utilise les mêmes données que celles envoyées
-      if (state.currentTool === "line") {
-        // Pour l'outil ligne, on attend la fin pour envoyer
-        // Mise à jour locale seulement
-        setState((prev) => ({
-          ...prev,
-          drawings: [
-            ...prev.drawings.filter((d) => d.id !== updatedDrawing.id),
-            updatedDrawing,
-          ],
-        }));
-        return;
-      }
-
-      // Pour les autres outils : envoyer immédiatement ET mettre à jour localement
-      // avec les mêmes données pour garantir la cohérence
+      // Envoyer immédiatement (y compris pour l'outil "line") pour la synchro temps réel
       socketService.sendDrawingData(updatedDrawing);
 
       // Mise à jour locale avec les mêmes données exactes
@@ -220,13 +202,7 @@ const useCanvas = () => {
         ],
       }));
     },
-    [
-      state.isDrawing,
-      state.roomId,
-      state.currentTool,
-      calculateDistance,
-      interpolatePoints,
-    ]
+    [state.isDrawing, state.roomId, calculateDistance, interpolatePoints]
   );
 
   // Terminer le dessin simplifié
@@ -235,7 +211,7 @@ const useCanvas = () => {
 
     const finalDrawing = currentDrawingRef.current;
 
-    // Pour l'outil ligne, on envoie maintenant le dessin complet
+    // Pour l'outil ligne, on envoie aussi la version finale (idempotent)
     if (state.currentTool === "line") {
       socketService.sendDrawingData(finalDrawing);
     }
@@ -507,20 +483,51 @@ const useCanvas = () => {
     const handleDrawingData = (data: DrawingData) => {
       console.log("Données de dessin reçues:", data);
       setState((prev) => {
-        // Remplacer directement avec les données exactes reçues
-        // Cela garantit que tous les clients ont exactement les mêmes données
-        const filteredDrawings = prev.drawings.filter((d) => d.id !== data.id);
+        const existing = prev.drawings.find((d) => d.id === data.id);
 
+        let updated: DrawingData;
+        if (data.isIncremental && existing) {
+          // Fusionner: garder les 'basePointCount' premiers points de l'existant puis ajouter les nouveaux
+          const baseCount =
+            typeof data.basePointCount === "number"
+              ? data.basePointCount
+              : existing.points.length;
+          const mergedPoints = [
+            ...existing.points.slice(0, baseCount),
+            ...data.points,
+          ];
+
+          updated = {
+            ...existing,
+            ...data,
+            points: mergedPoints,
+            // Assurer la cohérence du timestamp
+            timestamp: data.timestamp,
+          };
+        } else if (data.isIncremental && !existing) {
+          // Fallback: si on reçoit un incrémental sans base locale, on stocke tel quel
+          // (le serveur enverra aussi un full au départ)
+          updated = { ...data };
+        } else {
+          // Données complètes: remplacer proprement
+          updated = {
+            ...(existing || ({} as DrawingData)),
+            ...data,
+            timestamp: data.timestamp,
+          };
+        }
+
+        // Préserver un éventuel état "supprimé" local
+        if (existing?.isDeleted) {
+          updated.isDeleted = true;
+        }
+
+        const others = prev.drawings.filter((d) => d.id !== data.id);
         return {
           ...prev,
-          drawings: [
-            ...filteredDrawings,
-            {
-              ...data,
-              // S'assurer que les timestamps sont cohérents
-              timestamp: data.timestamp,
-            },
-          ].sort((a, b) => a.timestamp - b.timestamp), // Tri par timestamp pour cohérence
+          drawings: [...others, updated].sort(
+            (a, b) => a.timestamp - b.timestamp
+          ),
         };
       });
     };
@@ -573,8 +580,8 @@ const useCanvas = () => {
       setState((prev) => ({
         ...prev,
         drawings: [],
-        userHistory: [], // Supprimer l'historique de l'utilisateur
-        userHistoryIndex: -1, // Réinitialiser l'index
+        userHistory: [],
+        userHistoryIndex: -1,
       }));
     };
 
@@ -583,10 +590,18 @@ const useCanvas = () => {
       alert(`Erreur: ${error}`);
     };
 
-    // Nettoyer les anciens listeners
-    socketService.removeAllListeners();
+    // Désenregistrer précisément les anciens listeners (éviter removeAllListeners)
+    socketService.removeListener("drawing-data");
+    socketService.removeListener("user-joined");
+    socketService.removeListener("user-left");
+    socketService.removeListener("user-cursor");
+    socketService.removeListener("room-joined");
+    socketService.removeListener("room-error");
+    socketService.removeListener("canvas-clear");
+    socketService.removeListener("canvas-undo");
+    socketService.removeListener("canvas-redo");
 
-    // Enregistrer les nouveaux listeners
+    // Enregistrer les listeners
     socketService.onDrawingData(handleDrawingData);
     socketService.onUserJoined(handleUserJoined);
     socketService.onUserLeft(handleUserLeft);
@@ -599,7 +614,15 @@ const useCanvas = () => {
 
     return () => {
       console.log("Nettoyage des listeners Socket.IO");
-      socketService.removeAllListeners();
+      socketService.removeListener("drawing-data");
+      socketService.removeListener("user-joined");
+      socketService.removeListener("user-left");
+      socketService.removeListener("user-cursor");
+      socketService.removeListener("room-joined");
+      socketService.removeListener("room-error");
+      socketService.removeListener("canvas-clear");
+      socketService.removeListener("canvas-undo");
+      socketService.removeListener("canvas-redo");
       if (throttleRef.current) {
         clearTimeout(throttleRef.current);
       }
