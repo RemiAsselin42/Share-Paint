@@ -12,6 +12,7 @@ export interface DrawingData {
   color: string;
   lineWidth: number;
   opacity: number;
+  hardness?: number; // 0 (souple) -> 1 (dur/lining)
   points: Point[];
   startPoint?: Point;
   endPoint?: Point;
@@ -49,6 +50,7 @@ export interface CanvasState {
   currentColor: string;
   currentLineWidth: number;
   currentOpacity: number;
+  currentHardness: number; // 0..1
   isDrawing: boolean;
   roomId: string | null;
   userId: string;

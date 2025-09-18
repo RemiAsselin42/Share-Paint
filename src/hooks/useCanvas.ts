@@ -17,6 +17,7 @@ const useCanvas = () => {
     currentColor: "#40BFBF",
     currentLineWidth: 4,
     currentOpacity: 1,
+    currentHardness: 0.5,
     isDrawing: false,
     roomId: null,
     userId: uuidv4(),
@@ -133,6 +134,7 @@ const useCanvas = () => {
         color: state.currentColor,
         lineWidth: state.currentLineWidth,
         opacity: state.currentOpacity,
+        hardness: state.currentHardness,
         points: [point],
         timestamp: Date.now(),
       };
@@ -155,6 +157,7 @@ const useCanvas = () => {
       state.currentColor,
       state.currentLineWidth,
       state.currentOpacity,
+      state.currentHardness,
     ]
   );
 
@@ -305,6 +308,15 @@ const useCanvas = () => {
     setState((prev) => ({
       ...prev,
       currentOpacity: opacity,
+    }));
+  }, []);
+
+  // Changer la dureté
+  const setHardness = useCallback((hardness: number) => {
+    const clamped = Math.max(0, Math.min(1, hardness));
+    setState((prev) => ({
+      ...prev,
+      currentHardness: clamped,
     }));
   }, []);
 
@@ -689,6 +701,7 @@ const useCanvas = () => {
     saveCanvas,
     undo,
     redo,
+    setHardness,
 
     // Utilitaires
     isConnected,

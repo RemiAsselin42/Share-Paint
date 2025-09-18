@@ -8,10 +8,12 @@ interface ToolbarProps {
   currentColor: string;
   currentLineWidth: number;
   currentOpacity: number;
+  currentHardness: number;
   onToolChange: (tool: DrawingTool) => void;
   onColorChange: (color: string) => void;
   onLineWidthChange: (width: number) => void;
   onOpacityChange: (opacity: number) => void;
+  onHardnessChange: (hardness: number) => void;
   onClearCanvas: () => void;
   onSaveCanvas: (format: string) => void;
   onUndo: () => void;
@@ -42,10 +44,12 @@ const Toolbar: React.FC<ToolbarProps> = ({
   currentColor,
   currentLineWidth,
   currentOpacity,
+  currentHardness,
   onToolChange,
   onColorChange,
   onLineWidthChange,
   onOpacityChange,
+  onHardnessChange,
   onClearCanvas,
   onSaveCanvas,
   onUndo,
@@ -222,6 +226,52 @@ const Toolbar: React.FC<ToolbarProps> = ({
               step="0.05"
               value={currentOpacity}
               onChange={(e) => onOpacityChange(parseFloat(e.target.value))}
+              className="opacity-slider"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="toolbar-section">
+        <h3>
+          <i className="fas fa-wave-square"></i> Dureté
+        </h3>
+        <div className="opacity-section">
+          <div className="opacity-presets">
+            {[0, 0.25, 0.5, 0.75, 1].map((h) => (
+              <button
+                key={h}
+                className={`opacity-button ${
+                  Math.abs(currentHardness - h) < 0.01 ? "active" : ""
+                }`}
+                onClick={() => onHardnessChange(h)}
+                title={`${Math.round(h * 100)}% dur`}
+              >
+                <div
+                  className="opacity-preview"
+                  style={{
+                    background: "linear-gradient(90deg, #999 0%, #333 100%)",
+                    opacity: 0.7,
+                    filter: `contrast(${50 + h * 100}%)`,
+                  }}
+                ></div>
+              </button>
+            ))}
+          </div>
+
+          <div className="custom-opacity">
+            <label htmlFor="custom-hardness">
+              <i className="fas fa-sliders-h"></i> Personnalisé:{" "}
+              {Math.round(currentHardness * 100)}%
+            </label>
+            <input
+              id="custom-hardness"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={currentHardness}
+              onChange={(e) => onHardnessChange(parseFloat(e.target.value))}
               className="opacity-slider"
             />
           </div>

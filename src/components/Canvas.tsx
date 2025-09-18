@@ -9,6 +9,7 @@ interface CanvasProps {
   currentColor: string;
   currentLineWidth: number;
   currentOpacity: number;
+  currentHardness: number;
   isDrawing: boolean;
   onStartDrawing: (point: Point) => void;
   onDraw: (point: Point) => void;
@@ -25,6 +26,7 @@ const Canvas: React.FC<CanvasProps> = ({
   currentColor,
   currentLineWidth,
   currentOpacity,
+  currentHardness,
   isDrawing,
   onStartDrawing,
   onDraw,
@@ -146,55 +148,151 @@ const Canvas: React.FC<CanvasProps> = ({
       points: Point[],
       color: string,
       lineWidth: number,
-      opacity: number
+      opacity: number,
+      hardness: number
     ) => {
+      // Ignorer complètement la dureté pour l'outil Calligraphie
+      void hardness;
+
+      // Variation resserrée mais un peu plus visible: ~55% à 145% de lineWidth
+      const MIN_SCALE = 0.55;
+      const MAX_SCALE = 1.45;
+      const minThickness = Math.max(0.5, lineWidth * MIN_SCALE);
+      const maxThickness = lineWidth * MAX_SCALE;
+
+      if (points.length === 1) {
+        // Permettre de faire un point sur simple clic
+        const p = points[0];
+        const pressure = p.pressure ?? 0.5;
+        // Rayon clampé dans la même plage d'épaisseurs que le trait
+        const rawDiameter = lineWidth * (0.5 + pressure * 0.5); // 0.5x -> 1.0x lineWidth
+        const clampedDiameter = Math.max(
+          minThickness,
+          Math.min(maxThickness, rawDiameter)
+        );
+        const radius = Math.max(0.75, clampedDiameter / 2);
+        ctx.globalAlpha = opacity;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
       if (points.length < 2) return;
 
+      // Paramètres
       ctx.globalAlpha = opacity;
-      ctx.strokeStyle = color;
       ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
 
-      // Paramètres pour la calligraphie plus expressive
-      const maxThickness = lineWidth * 2.5; // Plus d'amplitude
-      const minThickness = lineWidth * 0.1; // Plus de contraste
+      // (minThickness et maxThickness déjà définis ci-dessus)
 
-      for (let i = 0; i < points.length - 1; i++) {
-        const p1 = points[i];
-        const p2 = points[i + 1];
-
-        // Épaisseur variable basée sur la vitesse ET la direction
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const speed = Math.min(distance, 15); // Seuil plus élevé
-
-        // Facteur de vitesse plus dramatique
+      // Calcul de l'épaisseur par point (vitesse/angle/pression)
+      const widths: number[] = new Array(points.length);
+      for (let i = 0; i < points.length; i++) {
+        const prev = i > 0 ? points[i - 1] : points[i];
+        const next = i < points.length - 1 ? points[i + 1] : points[i];
+        const dx = next.x - prev.x;
+        const dy = next.y - prev.y;
+        const distance = Math.hypot(dx, dy);
+        const speed = Math.min(distance, 15);
         const speedFactor = 1 - Math.pow(speed / 15, 0.7);
-
-        // Ajouter un effet basé sur l'angle pour simuler l'inclinaison du pinceau
         const angle = Math.atan2(dy, dx);
-        const angleFactor = Math.abs(Math.sin(angle * 2)) * 0.3 + 0.7; // Variation selon l'angle
-
-        // Combiner vitesse et angle pour l'épaisseur
-        const thickness =
+        const angleFactor = Math.abs(Math.sin(angle * 2)) * 0.3 + 0.7;
+        const varTh =
           minThickness +
           (maxThickness - minThickness) * speedFactor * angleFactor;
+        const pressure = points[i].pressure ?? 0.5;
+        const finalTh = Math.max(varTh * (0.5 + pressure * 0.5), minThickness);
+        widths[i] = finalTh;
+      }
 
-        // Utiliser la pression si disponible
-        const pressure = p1.pressure || 0.5;
-        const finalThickness = thickness * (0.5 + pressure * 0.5);
+      // Construire le ruban (polygone) gauche/droite
+      const left: Point[] = [];
+      const right: Point[] = [];
+      for (let i = 0; i < points.length; i++) {
+        const prev = i > 0 ? points[i - 1] : points[i];
+        const next = i < points.length - 1 ? points[i + 1] : points[i];
+        let tx = next.x - prev.x;
+        let ty = next.y - prev.y;
+        const len = Math.hypot(tx, ty) || 1;
+        tx /= len;
+        ty /= len;
+        // normale à gauche
+        const nx = -ty;
+        const ny = tx;
+        const hw = widths[i] / 2;
+        left.push({ x: points[i].x + nx * hw, y: points[i].y + ny * hw });
+        right.push({ x: points[i].x - nx * hw, y: points[i].y - ny * hw });
+      }
 
-        ctx.lineWidth = Math.max(finalThickness, minThickness);
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
+      // Tracer et remplir le polygone
+      ctx.beginPath();
+      ctx.moveTo(left[0].x, left[0].y);
+      for (let i = 1; i < left.length; i++) ctx.lineTo(left[i].x, left[i].y);
+      for (let i = right.length - 1; i >= 0; i--)
+        ctx.lineTo(right[i].x, right[i].y);
+      ctx.closePath();
+      ctx.fill();
 
+      // Bout arrondi aux extrémités
+      const startR = widths[0] / 2;
+      const endR = widths[widths.length - 1] / 2;
+      if (startR > 0.25) {
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
+        ctx.arc(points[0].x, points[0].y, startR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (endR > 0.25) {
+        ctx.beginPath();
+        ctx.arc(
+          points[points.length - 1].x,
+          points[points.length - 1].y,
+          endR,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
       }
     },
     []
+  );
+
+  // Ramer–Douglas–Peucker simplification to control "hardness" (straighter lines)
+  const perpendicularDistance = useCallback((p: Point, a: Point, b: Point) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (dx === 0 && dy === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy);
+    const projX = a.x + t * dx;
+    const projY = a.y + t * dy;
+    return Math.hypot(p.x - projX, p.y - projY);
+  }, []);
+
+  const rdpSimplify = useCallback(
+    (pts: Point[], epsilon: number): Point[] => {
+      if (pts.length < 3 || epsilon <= 0) return pts;
+      let dmax = 0;
+      let index = 0;
+      const end = pts.length - 1;
+      for (let i = 1; i < end; i++) {
+        const d = perpendicularDistance(pts[i], pts[0], pts[end]);
+        if (d > dmax) {
+          index = i;
+          dmax = d;
+        }
+      }
+      if (dmax > epsilon) {
+        const rec1 = rdpSimplify(pts.slice(0, index + 1), epsilon);
+        const rec2 = rdpSimplify(pts.slice(index), epsilon);
+        return rec1.slice(0, -1).concat(rec2);
+      } else {
+        return [pts[0], pts[end]];
+      }
+    },
+    [perpendicularDistance]
   );
 
   const drawLine = useCallback(
@@ -204,7 +302,8 @@ const Canvas: React.FC<CanvasProps> = ({
       color: string,
       lineWidth: number,
       opacity: number,
-      tool: DrawingTool
+      tool: DrawingTool,
+      hardnessInput?: number
     ) => {
       if (points.length < 1) return;
 
@@ -214,13 +313,37 @@ const Canvas: React.FC<CanvasProps> = ({
       ctx.fillStyle = color;
       ctx.lineWidth = lineWidth;
 
-      // ✅ SOLUTION : Propriétés fixes pour TOUS les outils (sauf cas spéciaux)
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
+      // Ajuster en fonction de la dureté
+      const hardnessRaw =
+        typeof hardnessInput === "number" ? hardnessInput : currentHardness;
+      const hardness = Math.max(0, Math.min(1, hardnessRaw));
+      const hardnessIsZero = hardness <= 0.0001;
+
+      // Caps/joins: si dureté minimale => aucun impact (comportement par défaut rond)
+      if (hardnessIsZero) {
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+      } else {
+        ctx.lineCap = hardness >= 0.75 ? "butt" : "round";
+        ctx.lineJoin = hardness >= 0.75 ? "miter" : "round";
+        ctx.miterLimit = 2 + hardness * 8; // plus dur => miter plus long
+      }
 
       // Anti-aliasing et qualité de rendu optimisée
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
+
+      // Calculer un epsilon de simplification basé sur la dureté et l'épaisseur
+      // Si dureté minimale => aucune simplification (trait 100% libre)
+      const epsilon = hardnessIsZero
+        ? 0
+        : hardness * Math.max(1, lineWidth * 0.6);
+      const simplifiedPoints =
+        tool === "line" || tool === "circle" || tool === "rectangle"
+          ? points
+          : epsilon > 0
+          ? rdpSimplify(points, epsilon)
+          : points;
 
       // Gestion des différents outils
       switch (tool) {
@@ -260,18 +383,22 @@ const Canvas: React.FC<CanvasProps> = ({
 
       // Dessiner selon le type d'outil
       if (tool === "calligraphy") {
-        // Traitement spécial pour la calligraphie
-        drawCalligraphy(ctx, points, color, lineWidth, opacity);
-      } else if (tool === "line" && points.length >= 2) {
+        // Calligraphie: chemin lissé unique, pas de simplification géométrique
+        // Note: la dureté est ignorée dans drawCalligraphy (aucun impact)
+        drawCalligraphy(ctx, points, color, lineWidth, opacity, hardness);
+      } else if (tool === "line" && simplifiedPoints.length >= 2) {
         // Ligne droite
         ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
-        ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+        ctx.moveTo(simplifiedPoints[0].x, simplifiedPoints[0].y);
+        ctx.lineTo(
+          simplifiedPoints[simplifiedPoints.length - 1].x,
+          simplifiedPoints[simplifiedPoints.length - 1].y
+        );
         ctx.stroke();
-      } else if (tool === "circle" && points.length >= 2) {
+      } else if (tool === "circle" && simplifiedPoints.length >= 2) {
         // Cercle
-        const startPoint = points[0];
-        const endPoint = points[points.length - 1];
+        const startPoint = simplifiedPoints[0];
+        const endPoint = simplifiedPoints[simplifiedPoints.length - 1];
         const radius = Math.sqrt(
           Math.pow(endPoint.x - startPoint.x, 2) +
             Math.pow(endPoint.y - startPoint.y, 2)
@@ -279,18 +406,18 @@ const Canvas: React.FC<CanvasProps> = ({
         ctx.beginPath();
         ctx.arc(startPoint.x, startPoint.y, radius, 0, 2 * Math.PI);
         ctx.stroke();
-      } else if (tool === "rectangle" && points.length >= 2) {
+      } else if (tool === "rectangle" && simplifiedPoints.length >= 2) {
         // Rectangle
-        const startPoint = points[0];
-        const endPoint = points[points.length - 1];
+        const startPoint = simplifiedPoints[0];
+        const endPoint = simplifiedPoints[simplifiedPoints.length - 1];
         const width = endPoint.x - startPoint.x;
         const height = endPoint.y - startPoint.y;
         ctx.beginPath();
         ctx.rect(startPoint.x, startPoint.y, width, height);
         ctx.stroke();
-      } else if (points.length === 1) {
+      } else if (simplifiedPoints.length === 1) {
         // Point unique avec gestion différenciée selon l'outil
-        const point = points[0];
+        const point = simplifiedPoints[0];
 
         if (tool === "pencil") {
           // Crayon : taille constante, pas de variation de pression
@@ -306,10 +433,10 @@ const Canvas: React.FC<CanvasProps> = ({
           ctx.arc(point.x, point.y, pressuredSize / 2, 0, Math.PI * 2);
           ctx.fill();
         }
-      } else if (points.length === 2) {
+      } else if (simplifiedPoints.length === 2) {
         // Deux points : ligne simple
-        const startPoint = points[0];
-        const endPoint = points[1];
+        const startPoint = simplifiedPoints[0];
+        const endPoint = simplifiedPoints[1];
 
         if (tool === "pencil") {
           // Crayon : épaisseur constante
@@ -328,43 +455,86 @@ const Canvas: React.FC<CanvasProps> = ({
         ctx.stroke();
       } else {
         // Courbe lissée avec gestion différenciée selon l'outil
-        if (tool === "brush") {
-          // Pinceau : avec des segments de taille variable selon la pression
-          for (let i = 0; i < points.length - 1; i++) {
-            const currentPoint = points[i];
-            const nextPoint = points[i + 1];
+        if (tool === "brush" || tool === "eraser") {
+          if (hardnessIsZero) {
+            // Dureté minimale: tracer une courbe continue lissée sans points ni segments visibles
+            // Approche: courbe quadratique avec épaisseur constante (pression moyenne)
+            const pressures = simplifiedPoints.map((p) => p.pressure ?? 0.5);
+            const avgPressure =
+              pressures.reduce((a, b) => a + b, 0) / (pressures.length || 1);
+            const width =
+              tool === "brush"
+                ? lineWidth * Math.max(0.1, avgPressure)
+                : lineWidth;
 
-            const currentPressure = currentPoint.pressure || 0.5;
-            const nextPressure = nextPoint.pressure || 0.5;
-            const avgPressure = (currentPressure + nextPressure) / 2;
-
-            // Ajuster la taille du trait selon la pression
-            const pressuredLineWidth = lineWidth * Math.max(0.1, avgPressure);
-
-            ctx.lineWidth = pressuredLineWidth;
+            ctx.lineWidth = width;
             ctx.beginPath();
-            ctx.moveTo(currentPoint.x, currentPoint.y);
-            ctx.lineTo(nextPoint.x, nextPoint.y);
+            ctx.moveTo(simplifiedPoints[0].x, simplifiedPoints[0].y);
+            for (let i = 1; i < simplifiedPoints.length - 2; i++) {
+              const cp1x =
+                (simplifiedPoints[i].x + simplifiedPoints[i + 1].x) / 2;
+              const cp1y =
+                (simplifiedPoints[i].y + simplifiedPoints[i + 1].y) / 2;
+              ctx.quadraticCurveTo(
+                simplifiedPoints[i].x,
+                simplifiedPoints[i].y,
+                cp1x,
+                cp1y
+              );
+            }
+            if (simplifiedPoints.length > 2) {
+              ctx.quadraticCurveTo(
+                simplifiedPoints[simplifiedPoints.length - 2].x,
+                simplifiedPoints[simplifiedPoints.length - 2].y,
+                simplifiedPoints[simplifiedPoints.length - 1].x,
+                simplifiedPoints[simplifiedPoints.length - 1].y
+              );
+            }
             ctx.stroke();
+          } else {
+            // Dureté > 0: segments variables avec pression (comportement existant)
+            for (let i = 0; i < simplifiedPoints.length - 1; i++) {
+              const currentPoint = simplifiedPoints[i];
+              const nextPoint = simplifiedPoints[i + 1];
+
+              const currentPressure = currentPoint.pressure || 0.5;
+              const nextPressure = nextPoint.pressure || 0.5;
+              const avgPressure = (currentPressure + nextPressure) / 2;
+
+              const pressuredLineWidth = lineWidth * Math.max(0.1, avgPressure);
+
+              ctx.lineWidth = pressuredLineWidth;
+              ctx.beginPath();
+              ctx.moveTo(currentPoint.x, currentPoint.y);
+              ctx.lineTo(nextPoint.x, nextPoint.y);
+              ctx.stroke();
+            }
           }
         } else if (tool === "pencil") {
           // Crayon : courbe lissée avec épaisseur constante (pas de variation de pression)
           ctx.lineWidth = lineWidth; // Épaisseur fixe
           ctx.beginPath();
-          ctx.moveTo(points[0].x, points[0].y);
+          ctx.moveTo(simplifiedPoints[0].x, simplifiedPoints[0].y);
 
-          for (let i = 1; i < points.length - 2; i++) {
-            const cp1x = (points[i].x + points[i + 1].x) / 2;
-            const cp1y = (points[i].y + points[i + 1].y) / 2;
-            ctx.quadraticCurveTo(points[i].x, points[i].y, cp1x, cp1y);
+          for (let i = 1; i < simplifiedPoints.length - 2; i++) {
+            const cp1x =
+              (simplifiedPoints[i].x + simplifiedPoints[i + 1].x) / 2;
+            const cp1y =
+              (simplifiedPoints[i].y + simplifiedPoints[i + 1].y) / 2;
+            ctx.quadraticCurveTo(
+              simplifiedPoints[i].x,
+              simplifiedPoints[i].y,
+              cp1x,
+              cp1y
+            );
           }
 
-          if (points.length > 2) {
+          if (simplifiedPoints.length > 2) {
             ctx.quadraticCurveTo(
-              points[points.length - 2].x,
-              points[points.length - 2].y,
-              points[points.length - 1].x,
-              points[points.length - 1].y
+              simplifiedPoints[simplifiedPoints.length - 2].x,
+              simplifiedPoints[simplifiedPoints.length - 2].y,
+              simplifiedPoints[simplifiedPoints.length - 1].x,
+              simplifiedPoints[simplifiedPoints.length - 1].y
             );
           }
 
@@ -373,20 +543,27 @@ const Canvas: React.FC<CanvasProps> = ({
           // Autres outils : courbe lissée avec épaisseur constante
           ctx.lineWidth = lineWidth; // Épaisseur fixe pour tous les autres outils
           ctx.beginPath();
-          ctx.moveTo(points[0].x, points[0].y);
+          ctx.moveTo(simplifiedPoints[0].x, simplifiedPoints[0].y);
 
-          for (let i = 1; i < points.length - 2; i++) {
-            const cp1x = (points[i].x + points[i + 1].x) / 2;
-            const cp1y = (points[i].y + points[i + 1].y) / 2;
-            ctx.quadraticCurveTo(points[i].x, points[i].y, cp1x, cp1y);
+          for (let i = 1; i < simplifiedPoints.length - 2; i++) {
+            const cp1x =
+              (simplifiedPoints[i].x + simplifiedPoints[i + 1].x) / 2;
+            const cp1y =
+              (simplifiedPoints[i].y + simplifiedPoints[i + 1].y) / 2;
+            ctx.quadraticCurveTo(
+              simplifiedPoints[i].x,
+              simplifiedPoints[i].y,
+              cp1x,
+              cp1y
+            );
           }
 
-          if (points.length > 2) {
+          if (simplifiedPoints.length > 2) {
             ctx.quadraticCurveTo(
-              points[points.length - 2].x,
-              points[points.length - 2].y,
-              points[points.length - 1].x,
-              points[points.length - 1].y
+              simplifiedPoints[simplifiedPoints.length - 2].x,
+              simplifiedPoints[simplifiedPoints.length - 2].y,
+              simplifiedPoints[simplifiedPoints.length - 1].x,
+              simplifiedPoints[simplifiedPoints.length - 1].y
             );
           }
 
@@ -400,7 +577,7 @@ const Canvas: React.FC<CanvasProps> = ({
 
       ctx.restore();
     },
-    [drawCalligraphy]
+    [drawCalligraphy, currentHardness, rdpSimplify]
   );
 
   // Fonction pour extraire la couleur à un point donné
@@ -585,11 +762,19 @@ const Canvas: React.FC<CanvasProps> = ({
             drawing.color,
             drawing.lineWidth,
             drawing.opacity || 1,
-            drawing.tool
+            drawing.tool,
+            drawing.hardness ?? currentHardness
           );
         }
       });
-  }, [getCacheCanvas, drawings, drawLine, CANVAS_WIDTH, CANVAS_HEIGHT]);
+  }, [
+    getCacheCanvas,
+    drawings,
+    drawLine,
+    CANVAS_WIDTH,
+    CANVAS_HEIGHT,
+    currentHardness,
+  ]);
 
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -799,78 +984,64 @@ const Canvas: React.FC<CanvasProps> = ({
         const tempCtx = tempCanvas.getContext("2d");
         if (!tempCtx) return;
 
-        // Utiliser la taille réelle du canvas virtuel pour une meilleure qualité
+        // Taille réelle du canvas virtuel pour une meilleure qualité
         tempCanvas.width = CANVAS_WIDTH;
         tempCanvas.height = CANVAS_HEIGHT;
 
-        // Toujours commencer avec un fond blanc
+        // Fond blanc
         tempCtx.fillStyle = "#ffffff";
         tempCtx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-        // Filtrer les dessins non supprimés et les trier par timestamp
+        // Dessins valides triés
         const validDrawings = drawings
-          .filter((drawing) => !drawing.isDeleted && drawing.points.length > 0)
+          .filter((d) => !d.isDeleted && d.points.length > 0)
           .sort((a, b) => a.timestamp - b.timestamp);
 
-        // Dessiner tous les dessins dans l'ordre chronologique
-        validDrawings.forEach((drawing) => {
-          // Pour la sauvegarde, convertir les traces de gomme en blanc pour éviter la transparence
-          if (drawing.tool === "eraser") {
+        // Rejouer tous les tracés (gomme aplatie en blanc)
+        validDrawings.forEach((d) => {
+          if (d.tool === "eraser") {
             drawLine(
               tempCtx,
-              drawing.points,
-              "#ffffff", // Forcer le blanc pour la gomme lors de l'export
-              drawing.lineWidth,
-              1, // Opacité maximale
-              "brush" // Traiter comme un pinceau blanc au lieu d'une gomme
+              d.points,
+              "#ffffff",
+              d.lineWidth,
+              1,
+              "brush",
+              d.hardness ?? currentHardness
             );
           } else {
             drawLine(
               tempCtx,
-              drawing.points,
-              drawing.color,
-              drawing.lineWidth,
-              drawing.opacity || 1,
-              drawing.tool
+              d.points,
+              d.color,
+              d.lineWidth,
+              d.opacity || 1,
+              d.tool,
+              d.hardness ?? currentHardness
             );
           }
         });
 
-        // Télécharger depuis le canvas temporaire propre
-        tempCanvas.toBlob(
-          (blob) => {
-            if (blob) {
-              downloadBlob(blob, `share-paint.${format.toLowerCase()}`);
-            }
-          },
-          mimeType,
-          quality
-        );
-      } catch (error) {
-        console.error("Erreur lors de l'enregistrement:", error);
-        alert("Erreur lors de l'enregistrement de l'image.");
+        // Exporter
+        const dataUrl = tempCanvas.toDataURL(mimeType, quality);
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const ext =
+          format.toLowerCase() === "jpg" ? "jpeg" : format.toLowerCase();
+        a.download = `share-paint-${ts}.${ext}`;
+        a.click();
+      } catch (err) {
+        console.error("Erreur lors de la sauvegarde du canvas:", err);
       }
     };
 
-    const downloadBlob = (blob: Blob, filename: string) => {
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    };
-
-    window.addEventListener("save-canvas", handleSaveCanvas as EventListener);
-    return () => {
-      window.removeEventListener(
-        "save-canvas",
-        handleSaveCanvas as EventListener
-      );
-    };
-  }, [drawings, drawLine]);
+    const listener = (e: Event) =>
+      handleSaveCanvas(e as CustomEvent<{ format: string }>);
+    window.addEventListener("saveCanvas", listener as EventListener);
+    return () =>
+      window.removeEventListener("saveCanvas", listener as EventListener);
+  }, [drawings, drawLine, CANVAS_WIDTH, CANVAS_HEIGHT, currentHardness]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();

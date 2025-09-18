@@ -42,6 +42,7 @@ function App() {
     currentColor,
     currentLineWidth,
     currentOpacity,
+    currentHardness,
     isDrawing,
     roomId,
     userId,
@@ -58,6 +59,7 @@ function App() {
     setColor,
     setLineWidth,
     setOpacity,
+    setHardness,
     clearCanvas,
     saveCanvas,
     undo,
@@ -227,10 +229,12 @@ function App() {
           currentColor={currentColor}
           currentLineWidth={currentLineWidth}
           currentOpacity={currentOpacity}
+          currentHardness={currentHardness}
           onToolChange={setTool}
           onColorChange={setColor}
           onLineWidthChange={setLineWidth}
           onOpacityChange={setOpacity}
+          onHardnessChange={setHardness}
           onClearCanvas={clearCanvas}
           onSaveCanvas={saveCanvas}
           onUndo={undo}
@@ -246,6 +250,7 @@ function App() {
           currentColor={currentColor}
           currentLineWidth={currentLineWidth}
           currentOpacity={currentOpacity}
+          currentHardness={currentHardness}
           isDrawing={isDrawing}
           onStartDrawing={startDrawing}
           onDraw={draw}
