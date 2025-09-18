@@ -303,9 +303,13 @@ const Canvas: React.FC<CanvasProps> = ({
       lineWidth: number,
       opacity: number,
       tool: DrawingTool,
-      hardnessInput?: number
+      hardnessInput?: number,
+      isDeleted: boolean = false // Nouveau paramètre pour indiquer si le dessin est supprimé
     ) => {
       if (points.length < 1) return;
+
+      // Si le dessin est marqué comme supprimé, ne rien dessiner
+      if (isDeleted) return;
 
       ctx.save();
       ctx.globalAlpha = opacity;
@@ -595,9 +599,9 @@ const Canvas: React.FC<CanvasProps> = ({
       tempCtx.fillStyle = "#ffffff";
       tempCtx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      // Dessiner tous les dessins non supprimés dans l'ordre chronologique
+      // Dessiner tous les dessins dans l'ordre chronologique (y compris supprimés)
+      // La fonction drawLine se chargera de ne pas dessiner les supprimés
       drawings
-        .filter((drawing) => !drawing.isDeleted)
         .sort((a, b) => a.timestamp - b.timestamp)
         .forEach((drawing) => {
           if (drawing.points.length > 0) {
@@ -607,7 +611,9 @@ const Canvas: React.FC<CanvasProps> = ({
               drawing.color,
               drawing.lineWidth,
               drawing.opacity || 1,
-              drawing.tool
+              drawing.tool,
+              undefined, // hardness
+              drawing.isDeleted ?? false // Passer le statut de suppression
             );
           }
         });
@@ -719,10 +725,11 @@ const Canvas: React.FC<CanvasProps> = ({
   // Fonction pour créer un hash des dessins pour détecter les changements
   const createDrawingsHash = useCallback((drawings: DrawingData[]): string => {
     return drawings
-      .filter((drawing) => !drawing.isDeleted)
       .map(
         (drawing) =>
-          `${drawing.id}-${drawing.timestamp}-${drawing.points.length}`
+          `${drawing.id}-${drawing.timestamp}-${drawing.points.length}-${
+            drawing.isDeleted ? "deleted" : "active"
+          }`
       )
       .join("|");
   }, []);
@@ -750,9 +757,9 @@ const Canvas: React.FC<CanvasProps> = ({
     cacheCtx.fillStyle = "#ffffff";
     cacheCtx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // Dessiner tous les dessins non supprimés dans l'ordre chronologique
+    // Dessiner tous les dessins dans l'ordre chronologique (y compris supprimés)
+    // La fonction drawLine se chargera de ne pas dessiner les supprimés
     drawings
-      .filter((drawing) => !drawing.isDeleted)
       .sort((a, b) => a.timestamp - b.timestamp)
       .forEach((drawing) => {
         if (drawing.points.length > 0) {
@@ -763,7 +770,8 @@ const Canvas: React.FC<CanvasProps> = ({
             drawing.lineWidth,
             drawing.opacity || 1,
             drawing.tool,
-            drawing.hardness ?? currentHardness
+            drawing.hardness ?? currentHardness,
+            drawing.isDeleted ?? false // Passer explicitement le statut de suppression
           );
         }
       });
@@ -785,7 +793,7 @@ const Canvas: React.FC<CanvasProps> = ({
 
     // Vérifier si nous devons mettre à jour le cache
     const currentDrawingsHash = createDrawingsHash(drawings);
-    const currentDrawingsCount = drawings.filter((d) => !d.isDeleted).length;
+    const currentDrawingsCount = drawings.length; // Total des dessins, pas seulement les non-supprimés
 
     // Si le hash a changé ou c'est le premier rendu, mettre à jour le cache
     if (
@@ -904,6 +912,34 @@ const Canvas: React.FC<CanvasProps> = ({
     redrawCanvas();
   }, [redrawCanvas]);
 
+  // Invalidation explicite du cache (utilisé après undo/redo)
+  useEffect(() => {
+    const invalidate = () => {
+      // Réinitialiser le cache et forcer un redraw immédiat
+      cacheCanvasRef.current = null;
+      lastDrawingsHashRef.current = "";
+      redrawCanvas();
+    };
+
+    // Force clear immédiat (synchrone) pour les undo/redo
+    const forceClear = () => {
+      cacheCanvasRef.current = null;
+      lastDrawingsHashRef.current = "";
+      // Redraw immédiat sans délai
+      const canvas = canvasRef.current;
+      if (canvas) {
+        redrawCanvas();
+      }
+    };
+
+    window.addEventListener("invalidate-canvas-cache", invalidate);
+    window.addEventListener("force-cache-clear", forceClear);
+    return () => {
+      window.removeEventListener("invalidate-canvas-cache", invalidate);
+      window.removeEventListener("force-cache-clear", forceClear);
+    };
+  }, [redrawCanvas]);
+
   // Effet spécifique pour redessiner lors du changement de taille du conteneur
   useEffect(() => {
     if (containerSize.width > 0 && containerSize.height > 0) {
@@ -1007,7 +1043,8 @@ const Canvas: React.FC<CanvasProps> = ({
               d.lineWidth,
               1,
               "brush",
-              d.hardness ?? currentHardness
+              d.hardness ?? currentHardness,
+              false // Pas supprimé puisque dans validDrawings
             );
           } else {
             drawLine(
@@ -1017,7 +1054,8 @@ const Canvas: React.FC<CanvasProps> = ({
               d.lineWidth,
               d.opacity || 1,
               d.tool,
-              d.hardness ?? currentHardness
+              d.hardness ?? currentHardness,
+              false // Pas supprimé puisque dans validDrawings
             );
           }
         });

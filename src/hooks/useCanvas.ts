@@ -348,7 +348,7 @@ const useCanvas = () => {
   const saveCanvas = useCallback((format: string = "png") => {
     // Cette fonction sera appelée depuis le composant qui a accès au canvas
     // Le vrai travail sera fait dans le composant Canvas
-    const event = new CustomEvent("save-canvas", { detail: { format } });
+    const event = new CustomEvent("saveCanvas", { detail: { format } });
     window.dispatchEvent(event);
   }, []);
 
@@ -371,11 +371,29 @@ const useCanvas = () => {
             : drawing
         );
 
-        return {
+        const newState = {
           ...prev,
           drawings: updatedDrawings,
           userHistoryIndex: prev.userHistoryIndex - 1,
         };
+
+        // Forcer l'invalidation du cache du canvas (évite les artefacts de point résiduel)
+        // Invalidation synchrone ET asynchrone pour garantir l'effacement immédiat
+        try {
+          // Invalidation immédiate synchrone
+          const cacheInvalidateEvent = new CustomEvent("force-cache-clear");
+          window.dispatchEvent(cacheInvalidateEvent);
+
+          // Invalidation asynchrone (backup)
+          setTimeout(() => {
+            const evt = new CustomEvent("invalidate-canvas-cache");
+            window.dispatchEvent(evt);
+          }, 0);
+        } catch {
+          // no-op
+        }
+
+        return newState;
       }
       return prev;
     });
@@ -400,11 +418,29 @@ const useCanvas = () => {
             : drawing
         );
 
-        return {
+        const newState = {
           ...prev,
           drawings: updatedDrawings,
           userHistoryIndex: newIndex,
         };
+
+        // Forcer l'invalidation du cache du canvas
+        // Invalidation synchrone ET asynchrone pour garantir l'effacement immédiat
+        try {
+          // Invalidation immédiate synchrone
+          const cacheInvalidateEvent = new CustomEvent("force-cache-clear");
+          window.dispatchEvent(cacheInvalidateEvent);
+
+          // Invalidation asynchrone (backup)
+          setTimeout(() => {
+            const evt = new CustomEvent("invalidate-canvas-cache");
+            window.dispatchEvent(evt);
+          }, 0);
+        } catch {
+          // no-op
+        }
+
+        return newState;
       }
       return prev;
     });
@@ -423,6 +459,21 @@ const useCanvas = () => {
             ? { ...drawing, isDeleted: true }
             : drawing
         );
+
+        // Invalidation explicite du cache pour undo distant
+        try {
+          // Invalidation immédiate synchrone
+          const cacheInvalidateEvent = new CustomEvent("force-cache-clear");
+          window.dispatchEvent(cacheInvalidateEvent);
+
+          // Invalidation asynchrone (backup)
+          setTimeout(() => {
+            const evt = new CustomEvent("invalidate-canvas-cache");
+            window.dispatchEvent(evt);
+          }, 0);
+        } catch {
+          // no-op
+        }
 
         return {
           ...prev,
@@ -446,6 +497,21 @@ const useCanvas = () => {
             ? { ...drawing, isDeleted: false }
             : drawing
         );
+
+        // Invalidation explicite du cache pour redo distant
+        try {
+          // Invalidation immédiate synchrone
+          const cacheInvalidateEvent = new CustomEvent("force-cache-clear");
+          window.dispatchEvent(cacheInvalidateEvent);
+
+          // Invalidation asynchrone (backup)
+          setTimeout(() => {
+            const evt = new CustomEvent("invalidate-canvas-cache");
+            window.dispatchEvent(evt);
+          }, 0);
+        } catch {
+          // no-op
+        }
 
         return {
           ...prev,

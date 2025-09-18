@@ -13,18 +13,14 @@ class SocketService {
   private serverUrl: string;
 
   // Optimisations pour le batching et throttling
-  private drawingBuffer: DrawingData[] = [];
   private cursorBuffer: { roomId: string; userId: string; cursor: Point }[] =
     [];
-  private lastDrawingSend = 0;
   private lastCursorSend = 0;
   private drawingBatchTimeout: number | null = null;
   private cursorBatchTimeout: number | null = null;
 
   // Configuration des optimisations pour la cohérence
-  private readonly DRAWING_BATCH_MS = 32; // ~30 FPS pour plus de cohérence
   private readonly CURSOR_BATCH_MS = 100; // ~10 FPS pour les curseurs
-  private readonly MAX_BATCH_SIZE = 5; // Moins d'éléments par batch pour plus de cohérence
 
   constructor() {
     // Configuration automatique de l'URL du serveur
@@ -103,18 +99,6 @@ class SocketService {
     }
   }
 
-  private flushDrawingBuffer(): void {
-    if (this.drawingBuffer.length > 0 && this.socket?.connected) {
-      // Envoyer seulement les données les plus récentes pour chaque trait
-      const optimizedData = this.optimizeDrawingData(this.drawingBuffer);
-      optimizedData.forEach((data) => {
-        this.socket!.emit("drawing-data", data);
-      });
-      this.drawingBuffer = [];
-      this.lastDrawingSend = Date.now();
-    }
-  }
-
   private flushCursorBuffer(): void {
     if (this.cursorBuffer.length > 0 && this.socket?.connected) {
       // Ne garder que la position la plus récente pour chaque utilisateur
@@ -141,32 +125,6 @@ class SocketService {
     }
   }
 
-  private optimizeDrawingData(buffer: DrawingData[]): DrawingData[] {
-    // Grouper par ID de dessin et ne garder que les données les plus complètes
-    // IMPORTANT: Garder l'ordre chronologique pour la cohérence
-    const drawingMap = new Map<string, DrawingData>();
-    const orderedIds: string[] = [];
-
-    buffer.forEach((data) => {
-      const existing = drawingMap.get(data.id);
-      // Garder toujours la version avec le plus de points ET le timestamp le plus récent
-      if (
-        !existing ||
-        data.points.length > existing.points.length ||
-        (data.points.length === existing.points.length &&
-          data.timestamp > existing.timestamp)
-      ) {
-        if (!existing) {
-          orderedIds.push(data.id);
-        }
-        drawingMap.set(data.id, data);
-      }
-    });
-
-    // Retourner dans l'ordre d'ajout pour maintenir la cohérence
-    return orderedIds.map((id) => drawingMap.get(id)!);
-  }
-
   isConnected(): boolean {
     return this.socket?.connected || false;
   }
@@ -188,22 +146,9 @@ class SocketService {
   sendDrawingData(data: DrawingData): void {
     if (!this.socket?.connected) return;
 
-    // Ajouter au buffer
-    this.drawingBuffer.push(data);
-
-    // Si le buffer est plein, envoyer immédiatement
-    if (this.drawingBuffer.length >= this.MAX_BATCH_SIZE) {
-      this.flushDrawingBuffer();
-      return;
-    }
-
-    // Sinon, programmer un envoi différé si pas déjà fait
-    if (!this.drawingBatchTimeout) {
-      this.drawingBatchTimeout = setTimeout(() => {
-        this.flushDrawingBuffer();
-        this.drawingBatchTimeout = null;
-      }, this.DRAWING_BATCH_MS);
-    }
+    // CORRECTION : Envoi immédiat pour garantir la synchronisation
+    // Le système de batch causait des pertes de données
+    this.socket.emit("drawing-data", data);
   }
 
   // Gestion du curseur avec optimisation
